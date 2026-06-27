@@ -45,6 +45,9 @@ pub enum QFactorsError {
     #[error("factor `{0}` is not known")]
     UnknownFactor(String),
 
+    #[error("factor `{0}` is registered more than once")]
+    DuplicateFactorName(String),
+
     #[error("factor `{factor_name}` has invalid window {window}")]
     InvalidWindow {
         factor_name: &'static str,

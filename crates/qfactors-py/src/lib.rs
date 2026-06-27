@@ -5,7 +5,9 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use pyo3_polars::{PyDataFrame, PySeries};
-use qfactors_core::{NullPolicy, PreparePanelOptions, PreparedPanel, QFactorsError, compute_panel};
+use qfactors_core::{
+    NullPolicy, PreparePanelOptions, PreparedPanel, QFactorsError, compute_panel, factor_catalog,
+};
 
 #[pyclass(name = "PreparedPanel", unsendable)]
 struct PyPreparedPanel {
@@ -47,15 +49,8 @@ impl PyPreparedPanel {
         output_path: Option<&str>,
     ) -> PyResult<PyDataFrame> {
         let observation_times = observation_series_from_py(py, observation_times)?;
-        let descriptors = qfactors_factors::phase2_descriptors();
-        let result = compute_panel(
-            &self.inner,
-            observation_times,
-            factors,
-            output_path,
-            &descriptors,
-        )
-        .map_err(to_py_err)?;
+        let result = compute_panel(&self.inner, observation_times, factors, output_path)
+            .map_err(to_py_err)?;
         Ok(PyDataFrame(result))
     }
 }
@@ -99,6 +94,12 @@ fn prepare_panel(
     Ok(PyPreparedPanel { inner: panel })
 }
 
+#[pyfunction(name = "factor_catalog")]
+fn factor_catalog_py() -> PyResult<PyDataFrame> {
+    qfactors_factors::ensure_linked();
+    factor_catalog().map(PyDataFrame).map_err(to_py_err)
+}
+
 fn observation_series_from_py(
     py: Python<'_>,
     observation_times: &Bound<'_, PyAny>,
@@ -118,6 +119,7 @@ fn qfactors(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<PyPreparedPanel>()?;
     module.add_function(wrap_pyfunction!(roundtrip, module)?)?;
     module.add_function(wrap_pyfunction!(prepare_panel, module)?)?;
+    module.add_function(wrap_pyfunction!(factor_catalog_py, module)?)?;
     Ok(())
 }
 

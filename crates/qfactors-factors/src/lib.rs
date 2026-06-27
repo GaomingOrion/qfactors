@@ -21,10 +21,11 @@ static RET_OUTPUTS: [ColumnSpec; 1] = [ColumnSpec {
     dtype: DType::F64,
 }];
 
-pub fn ensure_linked() {}
+#[linkme::distributed_slice(qfactors_core::registry::FACTOR_DESCRIPTORS)]
+static RET_DESCRIPTOR_FACTORY: fn() -> FactorDescriptor = ret_descriptor;
 
-pub fn phase2_descriptors() -> Vec<FactorDescriptor> {
-    vec![ret_descriptor()]
+pub fn ensure_linked() {
+    let _ = RET_DESCRIPTOR_FACTORY;
 }
 
 pub fn ret(open: &[f64], close: &[f64]) -> f64 {
@@ -72,8 +73,6 @@ mod tests {
 
     use polars::prelude::*;
 
-    use super::*;
-
     #[test]
     fn ret_descriptor_computes_valid_and_insufficient_windows() -> qfactors_core::Result<()> {
         let asset = (0..61).map(|_| "A").chain(["B"]).collect::<Vec<_>>();
@@ -110,7 +109,6 @@ mod tests {
             Series::new("time".into(), [60i64]),
             vec!["ret".to_string()],
             None,
-            &phase2_descriptors(),
         )?;
         let values = out
             .column("ret")?

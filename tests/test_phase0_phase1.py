@@ -86,6 +86,24 @@ def test_compute_panel_ret_uses_column_aliases():
     )
 
 
+def test_factor_catalog_contains_registered_ret_and_is_filterable():
+    catalog = qfactors.factor_catalog()
+
+    row = catalog.filter(pl.col("factor_name") == "ret").row(0, named=True)
+    assert row["kernel_name"] == "ret"
+    assert row["window"] == 60
+    assert row["input_names"] == ["open", "close"]
+    assert row["output_columns"] == ["ret"]
+
+    selected = (
+        catalog.filter(pl.col("kernel_name") == "ret")
+        .filter(pl.col("window") == 60)
+        .get_column("factor_name")
+        .to_list()
+    )
+    assert selected == ["ret"]
+
+
 def test_compute_panel_rejects_unknown_factor():
     panel = qfactors.prepare_panel(_phase2_input_frame(), group_col="asset", time_col="time")
 

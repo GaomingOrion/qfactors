@@ -1,27 +1,27 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 
 use polars::prelude::*;
 
 use crate::column_store::{ColumnStore, ensure_dtype, ensure_no_nulls};
 use crate::compute_sink::MemorySink;
 use crate::error::{QFactorsError, Result};
-use crate::factor::{FactorDescriptor, FactorResult, ResolvedFactor};
+use crate::factor::{FactorResult, ResolvedFactor, default_output_columns};
 use crate::obs_range_cache::ObsRangeCache;
 use crate::prepared_panel::{GROUP_ID_COL, PreparedPanel};
+use crate::registry::{FactorRegistry, factor_registry};
 
 pub fn compute_panel(
     panel: &PreparedPanel,
     observation_times: Series,
     factor_names: Vec<String>,
     output_path: Option<&str>,
-    descriptors: &[FactorDescriptor],
 ) -> Result<DataFrame> {
     if output_path.is_some() {
         return Err(QFactorsError::UnsupportedOutputPath);
     }
 
     let columns = ColumnStore::new(panel.dataframe());
-    let resolved = resolve_factors(panel, descriptors, &factor_names)?;
+    let resolved = resolve_factors(panel, factor_registry()?, &factor_names)?;
     let windows = collect_distinct_windows(&resolved)?;
     let observations = panel.resolve_observation_times(observation_times)?;
     let mut sink = MemorySink::new();
@@ -46,16 +46,15 @@ pub fn compute_panel(
 
 fn resolve_factors<'a>(
     panel: &PreparedPanel,
-    descriptors: &'a [FactorDescriptor],
+    registry: &'a FactorRegistry,
     factor_names: &[String],
 ) -> Result<Vec<ResolvedFactor<'a>>> {
-    let descriptor_by_name = descriptor_map(descriptors)?;
     let mut output_names = HashSet::new();
     let mut resolved = Vec::with_capacity(factor_names.len());
 
     for factor_name in factor_names {
-        let desc = descriptor_by_name
-            .get(factor_name.as_str())
+        let desc = registry
+            .get(factor_name)
             .ok_or_else(|| QFactorsError::UnknownFactor(factor_name.clone()))?;
 
         if desc.window == 0 {
@@ -94,31 +93,6 @@ fn resolve_factors<'a>(
     }
 
     Ok(resolved)
-}
-
-fn descriptor_map<'a>(
-    descriptors: &'a [FactorDescriptor],
-) -> Result<HashMap<&'static str, &'a FactorDescriptor>> {
-    let mut by_name = HashMap::with_capacity(descriptors.len());
-    for desc in descriptors {
-        if by_name.insert(desc.factor_name, desc).is_some() {
-            return Err(QFactorsError::OutputColumnConflict(
-                desc.factor_name.to_string(),
-            ));
-        }
-    }
-    Ok(by_name)
-}
-
-fn default_output_columns(desc: &FactorDescriptor) -> Vec<String> {
-    if desc.outputs.len() == 1 {
-        vec![desc.factor_name.to_string()]
-    } else {
-        desc.outputs
-            .iter()
-            .map(|output| format!("{}.{}", desc.factor_name, output.name))
-            .collect()
-    }
 }
 
 fn ensure_output_name_available(
@@ -187,10 +161,11 @@ fn validate_factor_result(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::ops::Range;
 
     use super::*;
-    use crate::factor::{ColumnSpec, DType};
+    use crate::factor::{ColumnSpec, DType, FactorDescriptor};
     use crate::{NullPolicy, PreparePanelOptions};
 
     static INPUTS: [ColumnSpec; 1] = [ColumnSpec {
@@ -214,6 +189,9 @@ mod tests {
             compute: dummy_compute,
         }
     }
+
+    #[linkme::distributed_slice(crate::registry::FACTOR_DESCRIPTORS)]
+    static TEST_DUMMY_DESCRIPTOR: fn() -> FactorDescriptor = dummy_descriptor;
 
     fn dummy_compute(
         columns: &ColumnStore<'_>,
@@ -261,7 +239,6 @@ mod tests {
             Series::new("time".into(), [2i64, 3]),
             vec!["dummy".to_string()],
             None,
-            &[dummy_descriptor()],
         )?;
 
         assert_eq!(out.height(), 4);
@@ -296,7 +273,6 @@ mod tests {
             Series::new("time".into(), [2i64]),
             vec!["missing".to_string()],
             None,
-            &[dummy_descriptor()],
         )
         .unwrap_err();
 

@@ -65,3 +65,14 @@ pub struct ResolvedFactor<'a> {
     pub input_columns: Vec<String>,
     pub output_columns: Vec<String>,
 }
+
+pub fn default_output_columns(desc: &FactorDescriptor) -> Vec<String> {
+    if desc.outputs.len() == 1 {
+        vec![desc.factor_name.to_string()]
+    } else {
+        desc.outputs
+            .iter()
+            .map(|output| format!("{}.{}", desc.factor_name, output.name))
+            .collect()
+    }
+}
