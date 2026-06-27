@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use polars::prelude::*;
 
 use crate::error::{QFactorsError, Result};
+use crate::factor::FactorResult;
 use crate::group::GroupInfo;
 
 pub const GROUP_ID_COL: &str = "__qfactors_group_id";
@@ -42,7 +43,15 @@ pub struct PreparedPanel {
     time_col: String,
     column_aliases: HashMap<String, String>,
     groups: Vec<GroupInfo>,
+    unique_times: Column,
     output_group_id: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreparedObservation {
+    pub input_index: usize,
+    pub value: Column,
+    pub ord_exclusive: usize,
 }
 
 impl PreparedPanel {
@@ -65,9 +74,10 @@ impl PreparedPanel {
         let group_ids = build_groups(&df, &options.group_col, &options.time_col)?;
         let time_ordinals = build_time_ordinals(&df, &options.time_col)?;
         let groups = group_ids.groups;
+        let unique_times = time_ordinals.unique_times;
 
         df.with_column(Column::new(GROUP_ID_COL.into(), group_ids.values))?;
-        df.with_column(Column::new(TIME_ORD_COL.into(), time_ordinals))?;
+        df.with_column(Column::new(TIME_ORD_COL.into(), time_ordinals.values))?;
 
         Ok(Self {
             df,
@@ -75,6 +85,7 @@ impl PreparedPanel {
             time_col: options.time_col,
             column_aliases: options.column_aliases,
             groups,
+            unique_times,
             output_group_id: options.output_group_id,
         })
     }
@@ -99,8 +110,68 @@ impl PreparedPanel {
         &self.groups
     }
 
+    pub fn unique_times(&self) -> &Column {
+        &self.unique_times
+    }
+
     pub fn output_group_id(&self) -> bool {
         self.output_group_id
+    }
+
+    pub fn resolve_observation_times(
+        &self,
+        mut observation_times: Series,
+    ) -> Result<Vec<PreparedObservation>> {
+        observation_times.rename(self.time_col.clone().into());
+        let mut observations = observation_times
+            .cast(self.unique_times.dtype())?
+            .into_column();
+        observations.rename(self.time_col.clone().into());
+
+        if observations.null_count() > 0 {
+            return Err(QFactorsError::ObservationTimeNull);
+        }
+
+        ensure_unique_observation_times(&observations)?;
+
+        let ord_exclusive_by_input = observation_ord_exclusive(&self.unique_times, &observations)?;
+        Ok((0..observations.len())
+            .map(|input_index| PreparedObservation {
+                input_index,
+                value: observations.new_from_index(input_index, 1),
+                ord_exclusive: ord_exclusive_by_input[input_index],
+            })
+            .collect())
+    }
+
+    pub fn build_observation_frame(
+        &self,
+        observation: &PreparedObservation,
+        factor_columns: FactorResult,
+    ) -> Result<DataFrame> {
+        let n_groups = self.groups.len();
+        let mut time = observation.value.new_from_index(0, n_groups);
+        time.rename(self.time_col.clone().into());
+
+        let group_indices = self
+            .groups
+            .iter()
+            .map(|group| group.start as IdxSize)
+            .collect::<Vec<_>>();
+        let mut group = self
+            .df
+            .column(&self.group_col)?
+            .take_slice(&group_indices)?;
+        group.rename(self.group_col.clone().into());
+
+        let mut columns = vec![time, group];
+        if self.output_group_id {
+            let group_ids = self.groups.iter().map(|group| group.id).collect::<Vec<_>>();
+            columns.push(Column::new(GROUP_ID_COL.into(), group_ids));
+        }
+        columns.extend(factor_columns);
+
+        Ok(DataFrame::new_infer_height(columns)?)
     }
 }
 
@@ -108,6 +179,12 @@ impl PreparedPanel {
 struct GroupBuildResult {
     values: Vec<u32>,
     groups: Vec<GroupInfo>,
+}
+
+#[derive(Debug)]
+struct TimeOrdinalBuildResult {
+    values: Vec<u32>,
+    unique_times: Column,
 }
 
 fn ensure_no_internal_column_conflicts(df: &DataFrame) -> Result<()> {
@@ -284,7 +361,7 @@ fn build_groups(df: &DataFrame, group_col: &str, time_col: &str) -> Result<Group
     Ok(GroupBuildResult { values, groups })
 }
 
-fn build_time_ordinals(df: &DataFrame, time_col: &str) -> Result<Vec<u32>> {
+fn build_time_ordinals(df: &DataFrame, time_col: &str) -> Result<TimeOrdinalBuildResult> {
     let time = df.column(time_col)?;
     let mut time_only = DataFrame::new_infer_height(vec![time.clone()])?;
     time_only = time_only.sort([time_col], SortMultipleOptions::default())?;
@@ -293,11 +370,13 @@ fn build_time_ordinals(df: &DataFrame, time_col: &str) -> Result<Vec<u32>> {
     let mut next_ord = 0u32;
     let mut previous_key: Option<String> = None;
     let mut ord_by_key = HashMap::new();
+    let mut unique_indices = Vec::new();
 
     for row in 0..time_only.height() {
         let key = value_key(sorted_time, row)?;
         if previous_key.as_ref() != Some(&key) {
             ord_by_key.insert(key.clone(), next_ord);
+            unique_indices.push(row as IdxSize);
             next_ord += 1;
             previous_key = Some(key);
         }
@@ -313,12 +392,86 @@ fn build_time_ordinals(df: &DataFrame, time_col: &str) -> Result<Vec<u32>> {
         );
     }
 
-    Ok(ordinals)
+    let unique_times = sorted_time.take_slice(&unique_indices)?.rechunk();
+
+    Ok(TimeOrdinalBuildResult {
+        values: ordinals,
+        unique_times,
+    })
 }
 
 fn value_key(column: &Column, row: usize) -> Result<String> {
     let value = column.get(row)?;
     Ok(format!("{:?}:{:?}", column.dtype(), value))
+}
+
+fn ensure_unique_observation_times(observations: &Column) -> Result<()> {
+    let mut seen = HashSet::with_capacity(observations.len());
+    for row in 0..observations.len() {
+        let key = value_key(observations, row)?;
+        if !seen.insert(key.clone()) {
+            return Err(QFactorsError::DuplicateObservationTime(key));
+        }
+    }
+    Ok(())
+}
+
+fn observation_ord_exclusive(unique_times: &Column, observations: &Column) -> Result<Vec<usize>> {
+    const KIND_COL: &str = "__qfactors_obs_kind";
+    const INPUT_INDEX_COL: &str = "__qfactors_obs_input_index";
+
+    let n_unique = unique_times.len();
+    let n_obs = observations.len();
+    let mut unique_time_col = unique_times.clone();
+    unique_time_col.rename(observations.name().clone());
+
+    let mut input_time_df = DataFrame::new_infer_height(vec![
+        unique_time_col,
+        Column::new(KIND_COL.into(), vec![0i32; n_unique]),
+        Column::new(INPUT_INDEX_COL.into(), vec![-1i64; n_unique]),
+    ])?;
+
+    let mut obs_time_col = observations.clone();
+    obs_time_col.rename(unique_times.name().clone());
+    let obs_df = DataFrame::new_infer_height(vec![
+        obs_time_col,
+        Column::new(KIND_COL.into(), vec![1i32; n_obs]),
+        Column::new(
+            INPUT_INDEX_COL.into(),
+            (0..n_obs as i64).collect::<Vec<_>>(),
+        ),
+    ])?;
+
+    input_time_df.vstack_mut(&obs_df)?;
+    let merged = input_time_df.sort(
+        [observations.name().as_str(), KIND_COL],
+        SortMultipleOptions::default(),
+    )?;
+    let kinds = merged
+        .column(KIND_COL)?
+        .try_i32()
+        .expect("kind column is Int32");
+    let input_indices = merged
+        .column(INPUT_INDEX_COL)?
+        .try_i64()
+        .expect("input index column is Int64");
+
+    let mut seen_unique = 0usize;
+    let mut ord_exclusive_by_input = vec![0usize; n_obs];
+
+    for row in 0..merged.height() {
+        match kinds.get(row).expect("kind has no nulls") {
+            0 => seen_unique += 1,
+            1 => {
+                let input_index =
+                    input_indices.get(row).expect("input index has no nulls") as usize;
+                ord_exclusive_by_input[input_index] = seen_unique;
+            }
+            _ => unreachable!("kind values are built locally"),
+        }
+    }
+
+    Ok(ord_exclusive_by_input)
 }
 
 #[cfg(test)]
@@ -427,6 +580,81 @@ mod tests {
             .into_no_null_iter()
             .collect::<Vec<_>>();
         assert!(values[1].is_nan());
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_observation_times_keeps_input_order_and_uses_upper_bound() -> Result<()> {
+        let df = df!(
+            "asset" => ["A", "A", "A"],
+            "time" => [1i64, 3, 5],
+            "close" => [10.0, 11.0, 12.0],
+        )?;
+        let panel = PreparedPanel::new(df, default_options())?;
+
+        let observations =
+            panel.resolve_observation_times(Series::new("time".into(), [4i64, 0, 6]))?;
+
+        assert_eq!(
+            observations
+                .iter()
+                .map(|observation| observation.input_index)
+                .collect::<Vec<_>>(),
+            [0, 1, 2]
+        );
+        assert_eq!(
+            observations
+                .iter()
+                .map(|observation| observation.ord_exclusive)
+                .collect::<Vec<_>>(),
+            [2, 0, 3]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_observation_times_rejects_duplicates() {
+        let df = df!(
+            "asset" => ["A", "A"],
+            "time" => [1i64, 2],
+            "close" => [10.0, 11.0],
+        )
+        .unwrap();
+        let panel = PreparedPanel::new(df, default_options()).unwrap();
+
+        let err = panel
+            .resolve_observation_times(Series::new("time".into(), [1i64, 1]))
+            .unwrap_err();
+        assert!(matches!(err, QFactorsError::DuplicateObservationTime(_)));
+    }
+
+    #[test]
+    fn build_observation_frame_restores_group_labels() -> Result<()> {
+        let df = df!(
+            "asset" => ["B", "A", "A"],
+            "time" => [1i64, 1, 2],
+            "close" => [20.0, 10.0, 11.0],
+        )?;
+        let panel = PreparedPanel::new(df, default_options())?;
+        let observations = panel.resolve_observation_times(Series::new("time".into(), [2i64]))?;
+        let frame = panel.build_observation_frame(
+            &observations[0],
+            vec![Column::new("ret".into(), vec![0.1, f64::NAN])],
+        )?;
+
+        assert_eq!(
+            frame
+                .column("asset")?
+                .try_str()
+                .expect("asset is string")
+                .iter()
+                .map(|value| value.expect("asset has no nulls"))
+                .collect::<Vec<_>>(),
+            ["A", "B"]
+        );
+        assert_eq!(frame.column("time")?.len(), 2);
 
         Ok(())
     }

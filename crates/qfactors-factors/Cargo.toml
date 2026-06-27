@@ -5,3 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+polars.workspace = true
+qfactors-core = { path = "../qfactors-core" }

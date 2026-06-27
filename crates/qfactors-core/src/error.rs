@@ -32,6 +32,64 @@ pub enum QFactorsError {
     #[error("duplicate (`{group_col}`, `{time_col}`) value found")]
     DuplicateGroupTime { group_col: String, time_col: String },
 
+    #[error("column `{column}` has dtype {actual}; expected {expected}")]
+    DTypeMismatch {
+        column: String,
+        expected: &'static str,
+        actual: String,
+    },
+
+    #[error("column `{0}` is not contiguous; prepare with rechunk=True")]
+    NonContiguousColumn(String),
+
+    #[error("factor `{0}` is not known")]
+    UnknownFactor(String),
+
+    #[error("factor `{factor_name}` has invalid window {window}")]
+    InvalidWindow {
+        factor_name: &'static str,
+        window: usize,
+    },
+
+    #[error("duplicate observation time `{0}`")]
+    DuplicateObservationTime(String),
+
+    #[error("null values are not allowed in observation_times")]
+    ObservationTimeNull,
+
+    #[error("output column `{0}` conflicts with another output column")]
+    OutputColumnConflict(String),
+
+    #[error("output_path is not supported in Phase 2 memory compute")]
+    UnsupportedOutputPath,
+
+    #[error("factor `{factor_name}` returned {actual} columns; expected {expected}")]
+    FactorOutputCount {
+        factor_name: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+
+    #[error(
+        "factor `{factor_name}` output column `{column}` has length {actual}; expected {expected}"
+    )]
+    FactorOutputLength {
+        factor_name: &'static str,
+        column: String,
+        expected: usize,
+        actual: usize,
+    },
+
+    #[error("factor `{factor_name}` output column `{actual}` should be `{expected}`")]
+    FactorOutputName {
+        factor_name: &'static str,
+        expected: String,
+        actual: String,
+    },
+
+    #[error("range cache does not contain window {0}")]
+    MissingWindowRange(usize),
+
     #[error("Polars error: {0}")]
     Polars(#[from] PolarsError),
 }

@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
+use polars::prelude::Series;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3_polars::PyDataFrame;
-use qfactors_core::{NullPolicy, PreparePanelOptions, PreparedPanel, QFactorsError};
+use pyo3::types::PyAny;
+use pyo3_polars::{PyDataFrame, PySeries};
+use qfactors_core::{NullPolicy, PreparePanelOptions, PreparedPanel, QFactorsError, compute_panel};
 
 #[pyclass(name = "PreparedPanel", unsendable)]
 struct PyPreparedPanel {
@@ -34,6 +36,27 @@ impl PyPreparedPanel {
 
     fn to_frame(&self) -> PyDataFrame {
         PyDataFrame(self.inner.dataframe().clone())
+    }
+
+    #[pyo3(signature = (observation_times, factors, output_path = None))]
+    fn compute_panel(
+        &self,
+        py: Python<'_>,
+        observation_times: &Bound<'_, PyAny>,
+        factors: Vec<String>,
+        output_path: Option<&str>,
+    ) -> PyResult<PyDataFrame> {
+        let observation_times = observation_series_from_py(py, observation_times)?;
+        let descriptors = qfactors_factors::phase2_descriptors();
+        let result = compute_panel(
+            &self.inner,
+            observation_times,
+            factors,
+            output_path,
+            &descriptors,
+        )
+        .map_err(to_py_err)?;
+        Ok(PyDataFrame(result))
     }
 }
 
@@ -74,6 +97,19 @@ fn prepare_panel(
 
     let panel = PreparedPanel::new(df.into(), options).map_err(to_py_err)?;
     Ok(PyPreparedPanel { inner: panel })
+}
+
+fn observation_series_from_py(
+    py: Python<'_>,
+    observation_times: &Bound<'_, PyAny>,
+) -> PyResult<Series> {
+    if let Ok(series) = observation_times.extract::<PySeries>() {
+        return Ok(series.0);
+    }
+
+    let polars = PyModule::import(py, "polars")?;
+    let series = polars.getattr("Series")?.call1((observation_times,))?;
+    Ok(series.extract::<PySeries>()?.0)
 }
 
 #[pymodule]

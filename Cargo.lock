@@ -2188,6 +2188,10 @@ dependencies = [
 [[package]]
 name = "qfactors-factors"
 version = "0.1.0"
+dependencies = [
+ "polars",
+ "qfactors-core",
+]
 
 [[package]]
 name = "qfactors-macros"
@@ -2197,6 +2201,7 @@ version = "0.1.0"
 name = "qfactors-py"
 version = "0.1.0"
 dependencies = [
+ "polars",
  "pyo3",
  "pyo3-polars",
  "qfactors-core",

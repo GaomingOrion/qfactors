@@ -9,6 +9,7 @@ name = "qfactors"
 crate-type = ["cdylib"]
 
 [dependencies]
+polars.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
 pyo3-polars.workspace = true
 qfactors-core = { path = "../qfactors-core" }
