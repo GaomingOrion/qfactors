@@ -1,0 +1,5 @@
+error: factor input dtype must be `f64`, `u32`, or `i64`
+ --> tests/ui/fail_input_type.rs:4:18
+  |
+4 | fn bad(values: &[i32]) -> f64 {
+  |                  ^^^

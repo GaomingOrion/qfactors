@@ -1,0 +1,5 @@
+error: `window` must be greater than zero
+ --> tests/ui/fail_window_zero.rs:3:19
+  |
+3 | #[factor(window = 0)]
+  |                   ^

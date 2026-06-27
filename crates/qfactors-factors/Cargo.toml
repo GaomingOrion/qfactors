@@ -8,3 +8,4 @@ license.workspace = true
 linkme.workspace = true
 polars.workspace = true
 qfactors-core = { path = "../qfactors-core" }
+qfactors-macros = { path = "../qfactors-macros" }

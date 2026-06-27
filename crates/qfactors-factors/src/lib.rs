@@ -1,77 +1,35 @@
-use std::ops::Range;
+use qfactors_macros::factor;
 
-use polars::prelude::Column;
-use qfactors_core::{
-    ColumnSpec, ColumnStore, DType, FactorDescriptor, FactorResult, ResolvedFactor, Result,
-};
+pub fn ensure_linked() {}
 
-static RET_INPUTS: [ColumnSpec; 2] = [
-    ColumnSpec {
-        name: "open",
-        dtype: DType::F64,
-    },
-    ColumnSpec {
-        name: "close",
-        dtype: DType::F64,
-    },
-];
-
-static RET_OUTPUTS: [ColumnSpec; 1] = [ColumnSpec {
-    name: "ret",
-    dtype: DType::F64,
-}];
-
-#[linkme::distributed_slice(qfactors_core::registry::FACTOR_DESCRIPTORS)]
-static RET_DESCRIPTOR_FACTORY: fn() -> FactorDescriptor = ret_descriptor;
-
-pub fn ensure_linked() {
-    let _ = RET_DESCRIPTOR_FACTORY;
-}
-
+#[factor(window = 60)]
 pub fn ret(open: &[f64], close: &[f64]) -> f64 {
     close[close.len() - 1] / open[0] - 1.0
 }
 
-pub fn ret_descriptor() -> FactorDescriptor {
-    FactorDescriptor {
-        factor_name: "ret",
-        kernel_name: "ret",
-        window: 60,
-        inputs: &RET_INPUTS,
-        outputs: &RET_OUTPUTS,
-        param_set: None,
-        params: &[],
-        compute: ret_compute,
-    }
-}
-
-fn ret_compute(
-    columns: &ColumnStore<'_>,
-    ranges: &[Option<Range<usize>>],
-    factor: &ResolvedFactor<'_>,
-) -> Result<FactorResult> {
-    let open = columns.f64(&factor.input_columns[0])?;
-    let close = columns.f64(&factor.input_columns[1])?;
-    let mut values = vec![f64::NAN; ranges.len()];
-
-    for (group_idx, range) in ranges.iter().enumerate() {
-        if let Some(range) = range {
-            values[group_idx] = ret(&open[range.clone()], &close[range.clone()]);
-        }
-    }
-
-    Ok(vec![Column::new(
-        factor.output_columns[0].clone().into(),
-        values,
-    )])
-}
-
 #[cfg(test)]
 mod tests {
-    use qfactors_core::{NullPolicy, PreparePanelOptions, PreparedPanel, compute_panel};
     use std::collections::HashMap;
 
     use polars::prelude::*;
+    use qfactors_core::{NullPolicy, PreparePanelOptions, PreparedPanel, Result, compute_panel};
+
+    use super::*;
+
+    #[factor(windows = [2, 3])]
+    fn delta(close: &[f64]) -> f64 {
+        close[close.len() - 1] - close[0]
+    }
+
+    #[factor(window = 2, outputs = ["first", "last"])]
+    fn bounds(close: &[f64]) -> (f64, f64) {
+        (close[0], close[close.len() - 1])
+    }
+
+    #[factor(window = 2)]
+    fn checked_delta(close: &[f64]) -> Result<f64> {
+        Ok(close[close.len() - 1] - close[0])
+    }
 
     #[test]
     fn ret_descriptor_computes_valid_and_insufficient_windows() -> qfactors_core::Result<()> {
@@ -119,6 +77,78 @@ mod tests {
 
         assert_eq!(values[0], 61.0 / 1.0 - 1.0);
         assert!(values[1].is_nan());
+
+        Ok(())
+    }
+
+    #[test]
+    fn macro_generated_factors_support_windows_outputs_and_result() -> qfactors_core::Result<()> {
+        let df = df!(
+            "asset" => ["A", "A", "A"],
+            "time" => [1i64, 2, 3],
+            "open" => [10.0, 11.0, 12.0],
+            "close" => [20.0, 23.0, 27.0],
+        )?;
+        let panel = PreparedPanel::new(
+            df,
+            PreparePanelOptions {
+                group_col: "asset".to_string(),
+                time_col: "time".to_string(),
+                column_aliases: HashMap::new(),
+                sort: true,
+                rechunk: true,
+                null_policy: NullPolicy::Error,
+                output_group_id: false,
+            },
+        )?;
+
+        let out = compute_panel(
+            &panel,
+            Series::new("time".into(), [3i64]),
+            vec![
+                "delta_2".to_string(),
+                "delta_3".to_string(),
+                "bounds".to_string(),
+                "checked_delta".to_string(),
+            ],
+            None,
+        )?;
+
+        assert_eq!(
+            out.column("delta_2")?
+                .try_f64()
+                .expect("delta_2 is f64")
+                .get(0),
+            Some(4.0)
+        );
+        assert_eq!(
+            out.column("delta_3")?
+                .try_f64()
+                .expect("delta_3 is f64")
+                .get(0),
+            Some(7.0)
+        );
+        assert_eq!(
+            out.column("bounds.first")?
+                .try_f64()
+                .expect("bounds.first is f64")
+                .get(0),
+            Some(23.0)
+        );
+        assert_eq!(
+            out.column("bounds.last")?
+                .try_f64()
+                .expect("bounds.last is f64")
+                .get(0),
+            Some(27.0)
+        );
+        assert_eq!(
+            out.column("checked_delta")?
+                .try_f64()
+                .expect("checked_delta is f64")
+                .get(0),
+            Some(4.0)
+        );
 
         Ok(())
     }
