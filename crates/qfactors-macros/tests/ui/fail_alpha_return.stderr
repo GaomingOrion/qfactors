@@ -1,0 +1,5 @@
+error: alpha functions must return `A`
+ --> tests/ui/fail_alpha_return.rs:4:13
+  |
+4 | fn bad() -> f64 {
+  |             ^^^

@@ -24,6 +24,7 @@ fn roundtrip(df: PyDataFrame) -> PyDataFrame {
     column_aliases = None,
     output_path = None
 ))]
+#[allow(clippy::too_many_arguments)]
 fn compute_panel_py(
     py: Python<'_>,
     df: PyDataFrame,

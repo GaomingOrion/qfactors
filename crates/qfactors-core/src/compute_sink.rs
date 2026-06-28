@@ -19,6 +19,7 @@ pub enum ComputeResult {
     File(ComputeSummary),
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum ComputeSink {
     Memory(MemorySink),
     File(FileSink),

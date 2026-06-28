@@ -1,5 +1,7 @@
 use qfactors_macros::factor;
 
+pub mod alphas;
+
 pub fn ensure_linked() {}
 
 #[factor(window = 60)]
@@ -22,11 +24,13 @@ pub fn volume_breakout(volume: &[f64], k: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::cmp::Ordering;
     use std::collections::HashMap;
 
     use polars::prelude::*;
     use qfactors_core::{
-        ComputePanelOptions, ComputeResult, Result, compute_panel, factor_catalog,
+        ComputePanelOptions, ComputeResult, Result, alpha_registry, compute_alphas, compute_panel,
+        factor_catalog,
     };
 
     use super::*;
@@ -218,6 +222,68 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn alpha8_is_registered() -> qfactors_core::Result<()> {
+        assert!(alpha_registry()?.get("alpha8").is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn alpha8_end_to_end_matches_reference_and_presence_edges() -> qfactors_core::Result<()> {
+        let fixture = alpha8_fixture()?;
+        let expected = reference_alpha8(&fixture);
+        let out = memory_frame(compute_alphas(
+            fixture.df,
+            options(),
+            vec!["alpha8".to_string()],
+            Series::new("time".into(), [18i64]),
+            None,
+        )?)?;
+
+        assert_eq!(out.height(), 4);
+        assert_eq!(
+            time_asset_rows(&out)?,
+            [
+                (18, "A".to_string()),
+                (18, "B".to_string()),
+                (18, "C".to_string()),
+                (18, "D".to_string())
+            ]
+        );
+
+        let values = out
+            .column("alpha8")?
+            .try_f64()
+            .expect("alpha8 is f64")
+            .into_no_null_iter()
+            .collect::<Vec<_>>();
+        assert_f64_eq(values[0], expected[0]);
+        assert_f64_eq(values[1], expected[1]);
+        assert!(values[2].is_nan());
+        assert!(values[3].is_nan());
+        assert!(expected[2].is_nan());
+        assert!(expected[3].is_nan());
+        assert!(expected[4].is_nan());
+
+        Ok(())
+    }
+
+    #[test]
+    fn alpha_missing_observation_time_keeps_schema() -> qfactors_core::Result<()> {
+        let fixture = alpha8_fixture()?;
+        let out = memory_frame(compute_alphas(
+            fixture.df,
+            options(),
+            vec!["alpha8".to_string()],
+            Series::new("time".into(), [99i64]),
+            None,
+        )?)?;
+
+        assert_eq!(out.height(), 0);
+        assert_eq!(column_names(&out), ["time", "asset", "alpha8"]);
+        Ok(())
+    }
+
     fn memory_frame(result: ComputeResult) -> qfactors_core::Result<DataFrame> {
         match result {
             ComputeResult::Memory(df) => Ok(df),
@@ -231,5 +297,183 @@ mod tests {
             time_col: "time".to_string(),
             column_aliases: HashMap::new(),
         }
+    }
+
+    struct Alpha8Fixture {
+        df: DataFrame,
+        n_symbols: usize,
+        n_times: usize,
+        open: Vec<f64>,
+        close: Vec<f64>,
+    }
+
+    fn alpha8_fixture() -> qfactors_core::Result<Alpha8Fixture> {
+        let symbols = ["A", "B", "C", "D", "E"];
+        let n_symbols = symbols.len();
+        let n_times = 18;
+        let mut assets = Vec::new();
+        let mut times = Vec::new();
+        let mut open_values = Vec::new();
+        let mut close_values = Vec::new();
+        let mut open = vec![f64::NAN; n_symbols * n_times];
+        let mut close = vec![f64::NAN; n_symbols * n_times];
+
+        for (symbol_idx, symbol) in symbols.iter().enumerate() {
+            for day in 1..=18 {
+                if *symbol == "C" && day < 9 {
+                    continue;
+                }
+                if *symbol == "D" && day == 8 {
+                    continue;
+                }
+                if *symbol == "E" && day == 18 {
+                    continue;
+                }
+
+                let raw_open = open_value(symbol_idx, day);
+                let raw_close = raw_open * (1.0 + return_rate(symbol_idx, day));
+                let idx = symbol_idx * n_times + (day as usize - 1);
+                open[idx] = raw_open;
+                close[idx] = raw_close;
+                assets.push((*symbol).to_string());
+                times.push(day as i64);
+                open_values.push(raw_open);
+                close_values.push(raw_close);
+            }
+        }
+
+        Ok(Alpha8Fixture {
+            df: df!(
+                "asset" => assets,
+                "time" => times,
+                "open" => open_values,
+                "close" => close_values,
+            )?,
+            n_symbols,
+            n_times,
+            open,
+            close,
+        })
+    }
+
+    fn open_value(symbol_idx: usize, day: i32) -> f64 {
+        (symbol_idx as f64 + 1.0) * 20.0 + day as f64 * (symbol_idx as f64 + 1.5)
+    }
+
+    fn return_rate(symbol_idx: usize, day: i32) -> f64 {
+        0.002 * (symbol_idx as f64 + 1.0) + 0.0005 * day as f64
+    }
+
+    fn reference_alpha8(fixture: &Alpha8Fixture) -> Vec<f64> {
+        let returns = reference_returns(&fixture.close, fixture.n_symbols, fixture.n_times);
+        let sum_open = reference_ts_sum(&fixture.open, fixture.n_symbols, fixture.n_times, 5);
+        let sum_returns = reference_ts_sum(&returns, fixture.n_symbols, fixture.n_times, 5);
+        let inner = sum_open
+            .into_iter()
+            .zip(sum_returns)
+            .map(|(open, returns)| open * returns)
+            .collect::<Vec<_>>();
+        let delayed_inner = reference_delay(&inner, fixture.n_symbols, fixture.n_times, 10);
+        let term = inner
+            .into_iter()
+            .zip(delayed_inner)
+            .map(|(inner, delayed)| inner - delayed)
+            .collect::<Vec<_>>();
+
+        reference_rank_time(&term, fixture.n_symbols, fixture.n_times, 17)
+            .into_iter()
+            .map(|value| -value)
+            .collect()
+    }
+
+    fn reference_returns(close: &[f64], n_symbols: usize, n_times: usize) -> Vec<f64> {
+        let mut out = vec![f64::NAN; close.len()];
+        for symbol in 0..n_symbols {
+            let offset = symbol * n_times;
+            for time in 1..n_times {
+                out[offset + time] = close[offset + time] / close[offset + time - 1] - 1.0;
+            }
+        }
+        out
+    }
+
+    fn reference_delay(values: &[f64], n_symbols: usize, n_times: usize, days: usize) -> Vec<f64> {
+        let mut out = vec![f64::NAN; values.len()];
+        for symbol in 0..n_symbols {
+            let offset = symbol * n_times;
+            for time in days..n_times {
+                out[offset + time] = values[offset + time - days];
+            }
+        }
+        out
+    }
+
+    fn reference_ts_sum(values: &[f64], n_symbols: usize, n_times: usize, days: usize) -> Vec<f64> {
+        let mut out = vec![f64::NAN; values.len()];
+        for symbol in 0..n_symbols {
+            let offset = symbol * n_times;
+            for time in days - 1..n_times {
+                let window = &values[offset + time + 1 - days..=offset + time];
+                if window.iter().all(|value| !value.is_nan()) {
+                    out[offset + time] = window.iter().sum();
+                }
+            }
+        }
+        out
+    }
+
+    fn reference_rank_time(
+        values: &[f64],
+        n_symbols: usize,
+        n_times: usize,
+        time: usize,
+    ) -> Vec<f64> {
+        let mut out = vec![f64::NAN; n_symbols];
+        let mut present = (0..n_symbols)
+            .filter_map(|symbol| {
+                let value = values[symbol * n_times + time];
+                (!value.is_nan()).then_some((symbol, value))
+            })
+            .collect::<Vec<_>>();
+        present.sort_by(|(_, lhs), (_, rhs)| lhs.partial_cmp(rhs).unwrap_or(Ordering::Equal));
+
+        let count = present.len() as f64;
+        let mut start = 0usize;
+        while start < present.len() {
+            let mut end = start + 1;
+            while end < present.len() && present[end].1 == present[start].1 {
+                end += 1;
+            }
+            let pct = (start + 1 + end) as f64 / 2.0 / count;
+            for (symbol, _) in &present[start..end] {
+                out[*symbol] = pct;
+            }
+            start = end;
+        }
+        out
+    }
+
+    fn time_asset_rows(df: &DataFrame) -> qfactors_core::Result<Vec<(i64, String)>> {
+        let times = df.column("time")?.try_i64().expect("time is i64");
+        let assets = df.column("asset")?.try_str().expect("asset is string");
+        Ok(times
+            .into_no_null_iter()
+            .zip(assets.iter())
+            .map(|(time, asset)| (time, asset.expect("asset has no nulls").to_string()))
+            .collect())
+    }
+
+    fn column_names(df: &DataFrame) -> Vec<String> {
+        df.get_column_names()
+            .iter()
+            .map(|name| name.to_string())
+            .collect()
+    }
+
+    fn assert_f64_eq(actual: f64, expected: f64) {
+        assert!(
+            (actual - expected).abs() < 1e-12,
+            "actual {actual}, expected {expected}"
+        );
     }
 }

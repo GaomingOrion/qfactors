@@ -192,7 +192,7 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
     }
 }
 
-fn validate_structural_column(column: &Column, is_symbol: bool) -> Result<()> {
+pub(crate) fn validate_structural_column(column: &Column, is_symbol: bool) -> Result<()> {
     if column.null_count() > 0 {
         if is_symbol {
             return Err(QFactorsError::SymbolNull(column.name().to_string()));
@@ -203,7 +203,7 @@ fn validate_structural_column(column: &Column, is_symbol: bool) -> Result<()> {
     reject_nan_values(column)
 }
 
-fn reject_nan_values(column: &Column) -> Result<()> {
+pub(crate) fn reject_nan_values(column: &Column) -> Result<()> {
     if !matches!(column.dtype(), DataType::Float32 | DataType::Float64) {
         return Ok(());
     }
@@ -219,7 +219,7 @@ fn reject_nan_values(column: &Column) -> Result<()> {
     Ok(())
 }
 
-fn is_nan_value(value: &AnyValue<'_>) -> bool {
+pub(crate) fn is_nan_value(value: &AnyValue<'_>) -> bool {
     match value {
         AnyValue::Float32(value) => value.is_nan(),
         AnyValue::Float64(value) => value.is_nan(),
@@ -242,6 +242,7 @@ fn sort_panel(df: &DataFrame, options: &ComputePanelOptions) -> Result<DataFrame
     )?)
 }
 
+#[allow(clippy::mutable_key_type)]
 fn resolve_observation_times(
     df: &DataFrame,
     time_col: &str,
@@ -281,6 +282,7 @@ fn resolve_observation_times(
 /// sorted by `(symbol, time)`, signalling the caller to sort and retry. Adjacent
 /// values are compared by borrowed `AnyValue` (no per-row clone); only the time
 /// lookup key is materialized, which is cheap for numeric/temporal time dtypes.
+#[allow(clippy::mutable_key_type)]
 fn scan_and_partition(
     df: &DataFrame,
     options: &ComputePanelOptions,

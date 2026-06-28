@@ -1,0 +1,5 @@
+error: alpha functions cannot take arguments
+ --> tests/ui/fail_alpha_args.rs:4:8
+  |
+4 | fn bad(value: f64) -> qfactors_core::A {
+  |        ^^^^^^^^^^

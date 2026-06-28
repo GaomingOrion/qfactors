@@ -17,12 +17,155 @@ pub fn factor(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
+#[proc_macro_attribute]
+pub fn alpha(attr: TokenStream, item: TokenStream) -> TokenStream {
+    match expand_alpha(attr.into(), item.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(error) => error.to_compile_error().into(),
+    }
+}
+
 fn expand_factor(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
     let args: FactorArgs = syn::parse2(attr)?;
     let function: ItemFn = syn::parse2(item)?;
     let analysis = FunctionAnalysis::new(&function, &args)?;
 
     Ok(generate_factor(function, analysis))
+}
+
+fn expand_alpha(attr: TokenStream2, item: TokenStream2) -> syn::Result<TokenStream2> {
+    let args: AlphaArgs = syn::parse2(attr)?;
+    let function: ItemFn = syn::parse2(item)?;
+    validate_alpha_function(&function)?;
+
+    Ok(generate_alpha(function, args))
+}
+
+struct AlphaArgs {
+    name: Option<String>,
+}
+
+impl Parse for AlphaArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let mut name = None;
+
+        while !input.is_empty() {
+            let key: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+
+            if key == "name" {
+                if name.is_some() {
+                    return Err(Error::new_spanned(key, "duplicate alpha `name`"));
+                }
+                let lit: LitStr = input.parse()?;
+                let value = lit.value();
+                if value.is_empty() {
+                    return Err(Error::new_spanned(lit, "alpha `name` cannot be empty"));
+                }
+                name = Some(value);
+            } else {
+                return Err(Error::new_spanned(key, "unsupported alpha attribute"));
+            }
+
+            if input.peek(Token![,]) {
+                input.parse::<Token![,]>()?;
+            } else if !input.is_empty() {
+                return Err(input.error("expected `,` between alpha attributes"));
+            }
+        }
+
+        Ok(Self { name })
+    }
+}
+
+fn validate_alpha_function(function: &ItemFn) -> syn::Result<()> {
+    let signature = &function.sig;
+    if signature.constness.is_some() {
+        return Err(Error::new_spanned(
+            signature.constness,
+            "alpha functions cannot be const",
+        ));
+    }
+    if signature.asyncness.is_some() {
+        return Err(Error::new_spanned(
+            signature.asyncness,
+            "alpha functions cannot be async",
+        ));
+    }
+    if signature.unsafety.is_some() {
+        return Err(Error::new_spanned(
+            signature.unsafety,
+            "alpha functions cannot be unsafe",
+        ));
+    }
+    if !signature.generics.params.is_empty() {
+        return Err(Error::new_spanned(
+            &signature.generics,
+            "alpha functions cannot be generic",
+        ));
+    }
+    if signature.variadic.is_some() {
+        return Err(Error::new_spanned(
+            &signature.variadic,
+            "alpha functions cannot be variadic",
+        ));
+    }
+    if !signature.inputs.is_empty() {
+        return Err(Error::new_spanned(
+            &signature.inputs,
+            "alpha functions cannot take arguments",
+        ));
+    }
+
+    let ReturnType::Type(_, ty) = &signature.output else {
+        return Err(Error::new_spanned(
+            &signature.output,
+            "alpha functions must return `A`",
+        ));
+    };
+    if !is_a_type(ty) {
+        return Err(Error::new_spanned(ty, "alpha functions must return `A`"));
+    }
+
+    Ok(())
+}
+
+fn is_a_type(ty: &Type) -> bool {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return false;
+    };
+    path.segments
+        .last()
+        .is_some_and(|segment| segment.ident == "A")
+}
+
+fn generate_alpha(function: ItemFn, args: AlphaArgs) -> TokenStream2 {
+    let alpha_ident = &function.sig.ident;
+    let alpha_name = args.name.unwrap_or_else(|| alpha_ident.to_string());
+    let build_ident = format_ident!("__qfactors_{}_build", alpha_ident);
+    let descriptor_ident = format_ident!("__qfactors_{}_descriptor", alpha_ident);
+    let register_ident = format_ident!(
+        "__QFACTORS_ALPHA_REGISTER_{}",
+        alpha_ident.to_string().to_ascii_uppercase()
+    );
+
+    quote! {
+        #function
+
+        fn #build_ident() -> ::qfactors_core::Expr {
+            #alpha_ident().into_expr()
+        }
+
+        fn #descriptor_ident() -> ::qfactors_core::AlphaDescriptor {
+            ::qfactors_core::AlphaDescriptor {
+                name: #alpha_name,
+                build: #build_ident,
+            }
+        }
+
+        #[linkme::distributed_slice(::qfactors_core::alpha_registry::ALPHA_DESCRIPTORS)]
+        static #register_ident: fn() -> ::qfactors_core::AlphaDescriptor = #descriptor_ident;
+    }
 }
 
 enum WindowArgs {
