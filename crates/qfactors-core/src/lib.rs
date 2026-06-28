@@ -1,6 +1,7 @@
 pub mod alpha;
 pub mod alpha_eval;
 pub mod alpha_registry;
+pub mod cellset;
 pub mod column_store;
 pub mod compute_alpha;
 pub mod compute_panel;
@@ -9,7 +10,7 @@ pub mod error;
 pub mod expr;
 pub mod factor;
 pub mod factor_catalog;
-pub mod grid;
+pub mod layout;
 pub mod registry;
 
 pub use alpha::A;

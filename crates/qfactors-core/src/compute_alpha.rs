@@ -2,17 +2,18 @@ use std::collections::{BTreeSet, HashSet};
 
 use polars::prelude::*;
 
-use crate::alpha_eval::{eval, to_grid};
+use crate::alpha_eval::{eval, to_cells};
 use crate::alpha_registry::alpha_registry;
+use crate::cellset::{CellSet, build_cellset};
 use crate::compute_panel::{ComputePanelOptions, reject_nan_values};
 use crate::compute_sink::{ComputeResult, ComputeSink};
 use crate::error::{QFactorsError, Result};
 use crate::expr::{Expr, collect_fields};
-use crate::grid::{Axis, GridCtx, build_grid};
+use crate::layout::Layout;
 
 struct ResolvedAlphaObservations {
     values: Column,
-    time_rows: Vec<Option<usize>>,
+    time_blocks: Vec<Option<usize>>,
 }
 
 pub fn compute_alphas(
@@ -28,27 +29,21 @@ pub fn compute_alphas(
         collect_fields(expr, &mut fields);
     }
 
-    let (ctx, symbols, times) = build_grid(&df, &options, &fields)?;
+    let cs = build_cellset(&df, &options, &fields)?;
     let results = resolved
         .into_iter()
-        .map(|(name, expr)| Ok((name, to_grid(eval(&expr, &ctx)?, &ctx))))
+        .map(|(name, expr)| Ok((name, to_cells(eval(&expr, &cs)?, Layout::Tn, &cs))))
         .collect::<Result<Vec<_>>>()?;
-    let observations =
-        resolve_alpha_observations(&df, &options.time_col, &times, observation_times)?;
-    let symbol_column = df
-        .column(&options.symbol_col)
-        .map_err(|_| QFactorsError::MissingColumn(options.symbol_col.clone()))?;
+    let observations = resolve_alpha_observations(&df, &options.time_col, &cs, observation_times)?;
 
     let mut sink = ComputeSink::for_output(output_path);
-    for (input_index, time_row) in observations.time_rows.iter().enumerate() {
+    for (input_index, time_block) in observations.time_blocks.iter().enumerate() {
         let frame = build_observation_frame(
-            &ctx,
-            &symbols,
-            symbol_column,
+            &cs,
             &results,
             &observations.values,
             input_index,
-            *time_row,
+            *time_block,
             &options,
         )?;
         sink.write_observation(frame)?;
@@ -91,7 +86,7 @@ fn ensure_output_name_available(
 fn resolve_alpha_observations(
     df: &DataFrame,
     time_col: &str,
-    times: &Axis,
+    cs: &CellSet,
     observation_times: Series,
 ) -> Result<ResolvedAlphaObservations> {
     let time_dtype = df.column(time_col)?.dtype().clone();
@@ -107,7 +102,7 @@ fn resolve_alpha_observations(
     reject_nan_values(&values)?;
 
     let mut seen = HashSet::with_capacity(values.len());
-    let mut time_rows = Vec::with_capacity(values.len());
+    let mut time_blocks = Vec::with_capacity(values.len());
     for row in 0..values.len() {
         let value = values.get(row)?.into_static();
         if !seen.insert(value.clone()) {
@@ -115,56 +110,40 @@ fn resolve_alpha_observations(
                 "{value:?}"
             )));
         }
-        time_rows.push(times.index_by_value.get(&value).copied());
+        time_blocks.push(cs.time_block_by_value.get(&value).copied());
     }
 
-    Ok(ResolvedAlphaObservations { values, time_rows })
+    Ok(ResolvedAlphaObservations {
+        values,
+        time_blocks,
+    })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn build_observation_frame(
-    ctx: &GridCtx,
-    symbols: &Axis,
-    source_symbol: &Column,
+    cs: &CellSet,
     results: &[(String, Vec<f64>)],
     observation_values: &Column,
     input_index: usize,
-    time_row: Option<usize>,
+    time_block: Option<usize>,
     options: &ComputePanelOptions,
 ) -> Result<DataFrame> {
-    let present_symbols = match time_row {
-        Some(time_row) => (0..ctx.n_symbols)
-            .filter(|&symbol| ctx.presence[symbol * ctx.n_times + time_row])
-            .collect::<Vec<_>>(),
-        None => Vec::new(),
-    };
-    let n_rows = present_symbols.len();
+    let range = time_block
+        .map(|idx| cs.time_blocks[idx].clone())
+        .unwrap_or(0..0);
+    let n_rows = range.len();
 
     let mut time = observation_values.new_from_index(input_index, n_rows);
     time.rename(options.time_col.clone().into());
 
-    let mut symbol = if present_symbols.is_empty() {
-        Column::new_empty(options.symbol_col.clone().into(), source_symbol.dtype())
-    } else {
-        let row_indices = present_symbols
-            .iter()
-            .map(|symbol| symbols.source_rows[*symbol] as IdxSize)
-            .collect::<Vec<_>>();
-        source_symbol.take_slice(&row_indices)?
-    };
+    let mut symbol = cs.symbols_tn.slice(range.start as i64, n_rows);
     symbol.rename(options.symbol_col.clone().into());
 
     let mut columns = vec![time, symbol];
     for (name, values) in results {
-        let column = match time_row {
-            Some(time_row) if !present_symbols.is_empty() => Column::new(
-                name.clone().into(),
-                present_symbols
-                    .iter()
-                    .map(|symbol| values[*symbol * ctx.n_times + time_row])
-                    .collect::<Vec<_>>(),
-            ),
-            _ => Column::new_empty(name.clone().into(), &DataType::Float64),
+        let column = if range.is_empty() {
+            Column::new_empty(name.clone().into(), &DataType::Float64)
+        } else {
+            Column::new(name.clone().into(), values[range.clone()].to_vec())
         };
         columns.push(column);
     }

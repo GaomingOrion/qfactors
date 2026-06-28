@@ -235,7 +235,7 @@ fn cmp_values(current: &AnyValue<'_>, previous: &AnyValue<'_>, column: &str) -> 
         })
 }
 
-fn sort_panel(df: &DataFrame, options: &ComputePanelOptions) -> Result<DataFrame> {
+pub(crate) fn sort_panel(df: &DataFrame, options: &ComputePanelOptions) -> Result<DataFrame> {
     Ok(df.sort(
         [&options.symbol_col, &options.time_col],
         SortMultipleOptions::default(),

@@ -229,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn alpha8_end_to_end_matches_reference_and_presence_edges() -> qfactors_core::Result<()> {
+    fn alpha8_end_to_end_matches_reference_and_compact_edges() -> qfactors_core::Result<()> {
         let fixture = alpha8_fixture()?;
         let expected = reference_alpha8(&fixture);
         let out = memory_frame(compute_alphas(
@@ -323,15 +323,16 @@ mod tests {
                 if *symbol == "C" && day < 9 {
                     continue;
                 }
-                if *symbol == "D" && day == 8 {
-                    continue;
-                }
                 if *symbol == "E" && day == 18 {
                     continue;
                 }
 
-                let raw_open = open_value(symbol_idx, day);
-                let raw_close = raw_open * (1.0 + return_rate(symbol_idx, day));
+                let (raw_open, raw_close) = if *symbol == "D" && day == 8 {
+                    (f64::NAN, f64::NAN)
+                } else {
+                    let raw_open = open_value(symbol_idx, day);
+                    (raw_open, raw_open * (1.0 + return_rate(symbol_idx, day)))
+                };
                 let idx = symbol_idx * n_times + (day as usize - 1);
                 open[idx] = raw_open;
                 close[idx] = raw_close;
