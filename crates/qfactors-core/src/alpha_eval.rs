@@ -381,6 +381,158 @@ fn ts_rolling_value<R: RollingValue + Default>(
             let value = values[idx];
             if value.is_nan() {
                 nan_count += 1;
+            } else if value.is_infinite() {
+                inf_count += 1;
+            } else {
+                reducer.push(value, days);
+            }
+
+            if local_idx >= days {
+                let old_idx = block.start + local_idx - days;
+                let old_value = values[old_idx];
+                if old_value.is_nan() {
+                    nan_count -= 1;
+                } else if old_value.is_infinite() {
+                    inf_count -= 1;
+                } else {
+                    reducer.pop(old_value);
+                }
+            }
+
+            if local_idx + 1 >= days && nan_count == 0 {
+                if inf_count == 0 {
+                    out[idx] = reducer.value(days);
+                } else {
+                    let start = block.start + local_idx + 1 - days;
+                    out[idx] = fallback(&values[start..=idx]);
+                }
+            }
+        }
+    }
+
+    out
+}
+
+#[derive(Default)]
+struct RollingSum {
+    sum: f64,
+}
+
+impl RollingValue for RollingSum {
+    fn push(&mut self, x: f64, _days: usize) {
+        self.sum += x;
+    }
+
+    fn pop(&mut self, x: f64) {
+        self.sum -= x;
+    }
+
+    fn value(&self, _days: usize) -> f64 {
+        self.sum
+    }
+}
+
+#[derive(Default)]
+struct RollingMean {
+    sum: f64,
+}
+
+impl RollingValue for RollingMean {
+    fn push(&mut self, x: f64, _days: usize) {
+        self.sum += x;
+    }
+
+    fn pop(&mut self, x: f64) {
+        self.sum -= x;
+    }
+
+    fn value(&self, days: usize) -> f64 {
+        self.sum / days as f64
+    }
+}
+
+#[derive(Default)]
+struct RollingVar {
+    n: usize,
+    mean: f64,
+    m2: f64,
+}
+
+impl RollingValue for RollingVar {
+    fn push(&mut self, x: f64, _days: usize) {
+        self.n += 1;
+        let delta = x - self.mean;
+        self.mean += delta / self.n as f64;
+        self.m2 += delta * (x - self.mean);
+    }
+
+    fn pop(&mut self, x: f64) {
+        if self.n <= 1 {
+            self.n = 0;
+            self.mean = 0.0;
+            self.m2 = 0.0;
+            return;
+        }
+
+        let old_n = self.n as f64;
+        self.n -= 1;
+        let new_n = self.n as f64;
+        let old_mean = self.mean;
+        self.mean = (old_n * old_mean - x) / new_n;
+        self.m2 -= (x - self.mean) * (x - old_mean);
+    }
+
+    fn value(&self, _days: usize) -> f64 {
+        if self.n < 2 {
+            return f64::NAN;
+        }
+        let variance = self.m2 / (self.n as f64 - 1.0);
+        variance.max(0.0).sqrt()
+    }
+}
+
+#[derive(Default)]
+struct RollingDecay {
+    sum: f64,
+    weighted_sum: f64,
+    pushed: usize,
+}
+
+impl RollingDecay {
+    fn push(&mut self, x: f64, days: usize) {
+        self.pushed += 1;
+        if self.pushed <= days {
+            self.weighted_sum += self.pushed as f64 * x;
+        } else {
+            self.weighted_sum += days as f64 * x - self.sum;
+        }
+        self.sum += x;
+    }
+
+    fn pop(&mut self, x: f64) {
+        self.sum -= x;
+    }
+
+    fn value(&self, days: usize) -> f64 {
+        self.weighted_sum / (days * (days + 1) / 2) as f64
+    }
+}
+
+fn ts_rolling_decay(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
+    let mut out = vec![f64::NAN; values.len()];
+    if days == 0 {
+        return out;
+    }
+
+    for block in &cs.sym_blocks {
+        let mut reducer = RollingDecay::default();
+        let mut nan_count = 0usize;
+        let mut inf_count = 0usize;
+        for local_idx in 0..block.len() {
+            let idx = block.start + local_idx;
+            let value = values[idx];
+            if value.is_nan() {
+                nan_count += 1;
                 reducer.push(0.0, days);
             } else if value.is_infinite() {
                 inf_count += 1;
@@ -408,59 +560,13 @@ fn ts_rolling_value<R: RollingValue + Default>(
                     out[idx] = reducer.value(days);
                 } else {
                     let start = block.start + local_idx + 1 - days;
-                    out[idx] = fallback(&values[start..=idx]);
+                    out[idx] = decay_linear_window(&values[start..=idx]);
                 }
             }
         }
     }
 
     out
-}
-
-#[derive(Default)]
-struct RollingMean {
-    sum: f64,
-}
-
-impl RollingValue for RollingMean {
-    fn push(&mut self, x: f64, _days: usize) {
-        self.sum += x;
-    }
-
-    fn pop(&mut self, x: f64) {
-        self.sum -= x;
-    }
-
-    fn value(&self, days: usize) -> f64 {
-        self.sum / days as f64
-    }
-}
-
-#[derive(Default)]
-struct RollingMoments {
-    sum: f64,
-    sum_squares: f64,
-}
-
-impl RollingValue for RollingMoments {
-    fn push(&mut self, x: f64, _days: usize) {
-        self.sum += x;
-        self.sum_squares += x * x;
-    }
-
-    fn pop(&mut self, x: f64) {
-        self.sum -= x;
-        self.sum_squares -= x * x;
-    }
-
-    fn value(&self, days: usize) -> f64 {
-        if days < 2 {
-            return f64::NAN;
-        }
-        let days = days as f64;
-        let variance = (self.sum_squares - self.sum * self.sum / days) / (days - 1.0);
-        variance.max(0.0).sqrt()
-    }
 }
 
 fn ts_deque_window(
@@ -594,7 +700,7 @@ fn delta(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
 }
 
 fn ts_sum(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
-    ts_window(values, days, cs, |window| window.iter().sum())
+    ts_rolling_value::<RollingSum>(values, days, cs, |window| window.iter().sum())
 }
 
 fn ts_mean(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
@@ -650,7 +756,7 @@ fn ts_rank(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
 }
 
 fn ts_std(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
-    ts_rolling_value::<RollingMoments>(values, days, cs, |window| {
+    ts_rolling_value::<RollingVar>(values, days, cs, |window| {
         if window.len() < 2 {
             return f64::NAN;
         }
@@ -668,14 +774,16 @@ fn ts_std(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
 }
 
 fn decay_linear(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
-    ts_window(values, days, cs, |window| {
-        let weighted = window
-            .iter()
-            .enumerate()
-            .map(|(idx, value)| (idx as f64 + 1.0) * value)
-            .sum::<f64>();
-        weighted / (window.len() * (window.len() + 1) / 2) as f64
-    })
+    ts_rolling_decay(values, days, cs)
+}
+
+fn decay_linear_window(window: &[f64]) -> f64 {
+    let weighted = window
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| (idx as f64 + 1.0) * value)
+        .sum::<f64>();
+    weighted / (window.len() * (window.len() + 1) / 2) as f64
 }
 
 fn correlation(lhs: &[f64], rhs: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
@@ -925,6 +1033,19 @@ mod tests {
         }
     }
 
+    fn two_pass_std(window: &[f64]) -> f64 {
+        let mean = window.iter().sum::<f64>() / window.len() as f64;
+        let variance = window
+            .iter()
+            .map(|value| {
+                let centered = value - mean;
+                centered * centered
+            })
+            .sum::<f64>()
+            / (window.len() as f64 - 1.0);
+        variance.sqrt()
+    }
+
     #[test]
     fn delay_shifts_with_nan_prefix() -> Result<()> {
         let cs = test_cellset(
@@ -1093,6 +1214,119 @@ mod tests {
             &nan_cs,
         );
         assert!(nan_out.iter().all(|value| value.is_nan()));
+        Ok(())
+    }
+
+    #[test]
+    fn ts_std_accurate_for_low_relative_variance() -> Result<()> {
+        let days = 60;
+        let values = (0..90)
+            .map(|idx| 1000.0 + ((idx % 13) as f64 - 6.0) * 0.01)
+            .collect::<Vec<_>>();
+        let cs = test_cellset(
+            values.clone(),
+            one_block(0..values.len()),
+            (0..values.len()).map(|idx| idx..idx + 1).collect(),
+        );
+
+        let out = cells(
+            eval(
+                &Expr::TsStd(Box::new(Expr::Field("x".to_string())), days),
+                &cs,
+            )?,
+            &cs,
+        );
+
+        for local_idx in days - 1..values.len() {
+            let expected = two_pass_std(&values[local_idx + 1 - days..=local_idx]);
+            assert!(
+                (out[local_idx] - expected).abs() <= 1e-8,
+                "idx {local_idx}: actual {}, expected {expected}",
+                out[local_idx]
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn rolling_windows_recover_after_nan_and_infinity() -> Result<()> {
+        let values = vec![
+            1.0,
+            f64::INFINITY,
+            3.0,
+            4.0,
+            5.0,
+            f64::NAN,
+            7.0,
+            8.0,
+            9.0,
+            f64::NEG_INFINITY,
+            11.0,
+            12.0,
+            13.0,
+        ];
+        let cs = test_cellset(
+            values.clone(),
+            one_block(0..values.len()),
+            (0..values.len()).map(|idx| idx..idx + 1).collect(),
+        );
+
+        let sum = cells(
+            eval(&Expr::TsSum(Box::new(Expr::Field("x".to_string())), 3), &cs)?,
+            &cs,
+        );
+        let mean = cells(
+            eval(
+                &Expr::TsMean(Box::new(Expr::Field("x".to_string())), 3),
+                &cs,
+            )?,
+            &cs,
+        );
+        let std = cells(
+            eval(&Expr::TsStd(Box::new(Expr::Field("x".to_string())), 3), &cs)?,
+            &cs,
+        );
+        let decay = cells(
+            eval(
+                &Expr::DecayLinear(Box::new(Expr::Field("x".to_string())), 3),
+                &cs,
+            )?,
+            &cs,
+        );
+
+        assert!(sum[2].is_infinite() && sum[2].is_sign_positive());
+        assert!(mean[2].is_infinite() && mean[2].is_sign_positive());
+        assert!(std[2].is_nan());
+        assert!(decay[2].is_infinite() && decay[2].is_sign_positive());
+
+        assert_f64_eq(sum[4], 12.0);
+        assert_f64_eq(mean[4], 4.0);
+        assert_f64_eq(std[4], 1.0);
+        assert_f64_eq(decay[4], 26.0 / 6.0);
+
+        for idx in 5..=7 {
+            assert!(sum[idx].is_nan());
+            assert!(mean[idx].is_nan());
+            assert!(std[idx].is_nan());
+            assert!(decay[idx].is_nan());
+        }
+
+        assert_f64_eq(sum[8], 24.0);
+        assert_f64_eq(mean[8], 8.0);
+        assert_f64_eq(std[8], 1.0);
+        assert_f64_eq(decay[8], 50.0 / 6.0);
+
+        assert!(sum[9].is_infinite() && sum[9].is_sign_negative());
+        assert!(mean[9].is_infinite() && mean[9].is_sign_negative());
+        assert!(std[9].is_nan());
+        assert!(decay[9].is_infinite() && decay[9].is_sign_negative());
+
+        assert_f64_eq(sum[12], 36.0);
+        assert_f64_eq(mean[12], 12.0);
+        assert_f64_eq(std[12], 1.0);
+        assert_f64_eq(decay[12], 74.0 / 6.0);
+
         Ok(())
     }
 

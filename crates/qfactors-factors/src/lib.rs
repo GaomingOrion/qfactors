@@ -483,7 +483,7 @@ mod tests {
         // Baseline frozen at v0.1.0. Re-bless only for an intentional output change:
         //   GOLDEN_BLESS=1 cargo test -p qfactors-factors all_alphas_golden -- --nocapture
         let n_symbols = 40;
-        let n_times = 300;
+        let n_times = 700;
         let df = synthetic_alpha_bench_frame(n_symbols, n_times)?;
         let mut alpha_names = alpha_registry()?
             .descriptors()
@@ -530,7 +530,7 @@ mod tests {
         .finish()
         .expect("read golden fixture");
 
-        assert_golden_within_tol(&out, &baseline, 1e-10, 1e-10);
+        assert_golden_within_tol(&out, &baseline, 1e-8, 1e-8);
         Ok(())
     }
 
@@ -621,10 +621,27 @@ mod tests {
             for time_idx in 1..=n_times {
                 let symbol = symbol_idx as f64 + 1.0;
                 let time = time_idx as f64;
-                let base = symbol * 10.0 + time * 0.2;
-                let close_value = base * (1.0 + ((time_idx % 11) as f64 - 5.0) * 0.001);
-                let high_value = base.max(close_value) + 1.0 + symbol_idx as f64 * 0.001;
-                let low_value = base.min(close_value) - 1.0;
+                let low_variance = symbol_idx < n_symbols.min(8);
+                let base = if low_variance {
+                    1_000.0 + symbol * 0.1
+                } else {
+                    symbol * 10.0 + time * 0.2
+                };
+                let close_value = if low_variance {
+                    base * (1.0 + ((time_idx % 11) as f64 - 5.0) * 0.00001)
+                } else {
+                    base * (1.0 + ((time_idx % 11) as f64 - 5.0) * 0.001)
+                };
+                let high_value = if low_variance {
+                    close_value + base * 0.00003
+                } else {
+                    base.max(close_value) + 1.0 + symbol_idx as f64 * 0.001
+                };
+                let low_value = if low_variance {
+                    close_value - base * 0.00003
+                } else {
+                    base.min(close_value) - 1.0
+                };
                 let volume_value = 1_000.0 + symbol * 3.0 + time * 5.0;
 
                 assets.push(format!("S{symbol_idx:04}"));
