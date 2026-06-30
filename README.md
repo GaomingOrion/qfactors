@@ -11,6 +11,33 @@ panels. It provides:
 The project is early-stage. APIs are usable for experimentation and internal
 research workflows, but should be treated as pre-1.0.
 
+## Roadmap
+
+qfactors is pre-1.0 and under active development. The current focus is the
+performance of the alpha expression engine while keeping results numerically
+stable — a frozen golden baseline guards every change at `1e-8` tolerance.
+
+**Done**
+
+- v0.1.0 baseline frozen behind a golden regression safety net.
+- `O(n)` rolling-window kernels (Welford variance, monotonic-deque min/max,
+  rolling sum/mean/decay) replacing per-window recomputation.
+- Global allocator (jemalloc on Unix, mimalloc on Windows).
+- WorldQuant 101 alphas (`alpha1`–`alpha101`).
+
+**In progress (0.2.x)**
+
+- Experimental DAG evaluator (`QF_ENGINE=dag`) with hash-consed common
+  subexpression elimination and slot-reuse. It is gated behind a flag and
+  benchmarked against the default tree engine; an optimization is promoted only
+  when it demonstrably beats the current default.
+
+**Planned**
+
+- Node-level parallelism and fewer layout transposes in the evaluator.
+- Publish to PyPI and crates.io.
+- Expanded factor / alpha catalog and API documentation.
+
 ## Installation
 
 This repository currently targets source builds. It is not published to PyPI or
