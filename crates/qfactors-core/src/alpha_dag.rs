@@ -2,6 +2,8 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use rayon::prelude::*;
+
 use crate::alpha_eval::{
     cmp_value, correlation, covariance, decay_linear, delay, delta, group_neutralize, group_rank,
     log_value, max_value, min_value, product, rank, scale, sign, signed_power, ts_argmax,
@@ -347,22 +349,36 @@ impl Dag {
 
     fn eval_roots(&self, roots: &[NodeId], cs: &CellSet) -> Result<Vec<Arc<DagVal>>> {
         let order = self.reachable_order(roots);
+        let levels = self.level_buckets(&order);
         let mut remaining_consumers = self.consumer_counts(&order, roots);
-        let mut slots = vec![None; self.nodes.len()];
+        let mut slots: Vec<Option<Arc<DagVal>>> = vec![None; self.nodes.len()];
 
-        for id in &order {
-            let value = Arc::new(self.eval_node(*id, &slots, cs)?);
-            slots[id.index()] = Some(value);
-
-            self.nodes[id.index()].visit_children(|child| {
-                let remaining = &mut remaining_consumers[child.index()];
-                *remaining = remaining
-                    .checked_sub(1)
-                    .expect("child consumer count underflow");
-                if *remaining == 0 {
-                    slots[child.index()] = None;
-                }
-            });
+        for level in &levels {
+            // Every child of a node sits in a strictly lower level, so nodes in
+            // one level are mutually independent: evaluate them in parallel while
+            // reading the already-filled slots immutably, then install the
+            // results sequentially. The parallel phase never mutates, so the
+            // borrows can't overlap and there is no data race.
+            let computed = level
+                .par_iter()
+                .map(|&id| self.eval_node(id, &slots, cs).map(|value| (id, Arc::new(value))))
+                .collect::<Result<Vec<_>>>()?;
+            for (id, value) in computed {
+                slots[id.index()] = Some(value);
+            }
+            // Release any child whose last consumer has now run, capping peak
+            // memory the same way the sequential evaluator did.
+            for &id in level {
+                self.nodes[id.index()].visit_children(|child| {
+                    let remaining = &mut remaining_consumers[child.index()];
+                    *remaining = remaining
+                        .checked_sub(1)
+                        .expect("child consumer count underflow");
+                    if *remaining == 0 {
+                        slots[child.index()] = None;
+                    }
+                });
+            }
         }
 
         let values = roots
@@ -377,6 +393,26 @@ impl Dag {
             .collect();
 
         Ok(values)
+    }
+
+    /// Group reachable nodes by dependency depth. `order` is ascending index =
+    /// topological order, so each child's level is final before its parent.
+    fn level_buckets(&self, order: &[NodeId]) -> Vec<Vec<NodeId>> {
+        let mut level = vec![0usize; self.nodes.len()];
+        let mut max_level = 0;
+        for &id in order {
+            let mut node_level = 0;
+            self.nodes[id.index()].visit_children(|child| {
+                node_level = node_level.max(level[child.index()] + 1);
+            });
+            level[id.index()] = node_level;
+            max_level = max_level.max(node_level);
+        }
+        let mut buckets = vec![Vec::new(); max_level + 1];
+        for &id in order {
+            buckets[level[id.index()]].push(id);
+        }
+        buckets
     }
 
     fn reachable_order(&self, roots: &[NodeId]) -> Vec<NodeId> {
