@@ -27,7 +27,11 @@ qfactors-core = { path = "../qfactors-core" }
 qfactors-factors = { path = "../qfactors-factors" }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
-tikv-jemallocator = "0.7.0"
+# `disable_initial_exec_tls` makes jemalloc use the global-dynamic TLS model so
+# this cdylib can be dlopen'd as a Python extension on Linux/glibc; the default
+# initial-exec model fails import with "cannot allocate memory in static TLS
+# block".
+tikv-jemallocator = { version = "0.7.0", features = ["disable_initial_exec_tls"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 mimalloc = "0.1.52"
