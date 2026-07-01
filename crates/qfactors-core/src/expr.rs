@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -156,6 +156,101 @@ pub fn collect_fields(expr: &Expr, out: &mut BTreeSet<String>) {
     }
 }
 
+pub fn rename_fields(expr: &Expr, names: &BTreeMap<String, String>) -> Expr {
+    match expr {
+        Expr::Field(name) => Expr::Field(names.get(name).cloned().unwrap_or_else(|| name.clone())),
+        Expr::Const(value) => Expr::Const(*value),
+        Expr::Add(lhs, rhs) => binary(lhs, rhs, names, Expr::Add),
+        Expr::Sub(lhs, rhs) => binary(lhs, rhs, names, Expr::Sub),
+        Expr::Mul(lhs, rhs) => binary(lhs, rhs, names, Expr::Mul),
+        Expr::Div(lhs, rhs) => binary(lhs, rhs, names, Expr::Div),
+        Expr::Neg(inner) => unary(inner, names, Expr::Neg),
+        Expr::Delay(inner, days) => unary_window(inner, *days, names, Expr::Delay),
+        Expr::Delta(inner, days) => unary_window(inner, *days, names, Expr::Delta),
+        Expr::TsSum(inner, days) => unary_window(inner, *days, names, Expr::TsSum),
+        Expr::TsMean(inner, days) => unary_window(inner, *days, names, Expr::TsMean),
+        Expr::Product(inner, days) => unary_window(inner, *days, names, Expr::Product),
+        Expr::TsMin(inner, days) => unary_window(inner, *days, names, Expr::TsMin),
+        Expr::TsMax(inner, days) => unary_window(inner, *days, names, Expr::TsMax),
+        Expr::TsArgMin(inner, days) => unary_window(inner, *days, names, Expr::TsArgMin),
+        Expr::TsArgMax(inner, days) => unary_window(inner, *days, names, Expr::TsArgMax),
+        Expr::TsRank(inner, days) => unary_window(inner, *days, names, Expr::TsRank),
+        Expr::TsRankRaw(inner, days) => unary_window(inner, *days, names, Expr::TsRankRaw),
+        Expr::TsStd(inner, days) => unary_window(inner, *days, names, Expr::TsStd),
+        Expr::DecayLinear(inner, days) => unary_window(inner, *days, names, Expr::DecayLinear),
+        Expr::Correlation(lhs, rhs, days) => {
+            binary_window(lhs, rhs, *days, names, Expr::Correlation)
+        }
+        Expr::Covariance(lhs, rhs, days) => binary_window(lhs, rhs, *days, names, Expr::Covariance),
+        Expr::Rank(inner) => unary(inner, names, Expr::Rank),
+        Expr::Scale(inner, scale_to) => {
+            Expr::Scale(Box::new(rename_fields(inner, names)), *scale_to)
+        }
+        Expr::GroupRank(lhs, rhs) => binary(lhs, rhs, names, Expr::GroupRank),
+        Expr::GroupNeutralize(lhs, rhs) => binary(lhs, rhs, names, Expr::GroupNeutralize),
+        Expr::Abs(inner) => unary(inner, names, Expr::Abs),
+        Expr::Log(inner) => unary(inner, names, Expr::Log),
+        Expr::Sign(inner) => unary(inner, names, Expr::Sign),
+        Expr::SignedPower(lhs, rhs) => binary(lhs, rhs, names, Expr::SignedPower),
+        Expr::Power(lhs, rhs) => binary(lhs, rhs, names, Expr::Power),
+        Expr::Min(lhs, rhs) => binary(lhs, rhs, names, Expr::Min),
+        Expr::Max(lhs, rhs) => binary(lhs, rhs, names, Expr::Max),
+        Expr::Cmp(op, lhs, rhs) => Expr::Cmp(
+            *op,
+            Box::new(rename_fields(lhs, names)),
+            Box::new(rename_fields(rhs, names)),
+        ),
+        Expr::Where(cond, when_true, when_false) => Expr::Where(
+            Box::new(rename_fields(cond, names)),
+            Box::new(rename_fields(when_true, names)),
+            Box::new(rename_fields(when_false, names)),
+        ),
+    }
+}
+
+fn unary(
+    inner: &Expr,
+    names: &BTreeMap<String, String>,
+    build: impl FnOnce(Box<Expr>) -> Expr,
+) -> Expr {
+    build(Box::new(rename_fields(inner, names)))
+}
+
+fn unary_window(
+    inner: &Expr,
+    days: usize,
+    names: &BTreeMap<String, String>,
+    build: impl FnOnce(Box<Expr>, usize) -> Expr,
+) -> Expr {
+    build(Box::new(rename_fields(inner, names)), days)
+}
+
+fn binary(
+    lhs: &Expr,
+    rhs: &Expr,
+    names: &BTreeMap<String, String>,
+    build: impl FnOnce(Box<Expr>, Box<Expr>) -> Expr,
+) -> Expr {
+    build(
+        Box::new(rename_fields(lhs, names)),
+        Box::new(rename_fields(rhs, names)),
+    )
+}
+
+fn binary_window(
+    lhs: &Expr,
+    rhs: &Expr,
+    days: usize,
+    names: &BTreeMap<String, String>,
+    build: impl FnOnce(Box<Expr>, Box<Expr>, usize) -> Expr,
+) -> Expr {
+    build(
+        Box::new(rename_fields(lhs, names)),
+        Box::new(rename_fields(rhs, names)),
+        days,
+    )
+}
+
 pub(crate) fn lookback_depth(expr: &Expr) -> usize {
     match expr {
         Expr::Field(_) | Expr::Const(_) => 0,
@@ -246,6 +341,47 @@ mod tests {
                 "industry".to_string(),
                 "low".to_string(),
                 "open".to_string(),
+                "volume".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn rename_fields_recurses_and_leaves_unmapped_names() {
+        let expr = Expr::Where(
+            Box::new(Expr::Cmp(
+                CmpOp::Le,
+                Box::new(Expr::Correlation(
+                    Box::new(Expr::Field("close".to_string())),
+                    Box::new(Expr::Field("volume".to_string())),
+                    3,
+                )),
+                Box::new(Expr::Const(0.0)),
+            )),
+            Box::new(Expr::GroupRank(
+                Box::new(Expr::Field("open".to_string())),
+                Box::new(Expr::Field("industry".to_string())),
+            )),
+            Box::new(Expr::Scale(Box::new(Expr::Field("low".to_string())), 1.0)),
+        );
+        let renamed = rename_fields(
+            &expr,
+            &BTreeMap::from([
+                ("close".to_string(), "adj_close".to_string()),
+                ("open".to_string(), "adj_open".to_string()),
+            ]),
+        );
+
+        let mut fields = BTreeSet::new();
+        collect_fields(&renamed, &mut fields);
+
+        assert_eq!(
+            fields.into_iter().collect::<Vec<_>>(),
+            [
+                "adj_close".to_string(),
+                "adj_open".to_string(),
+                "industry".to_string(),
+                "low".to_string(),
                 "volume".to_string()
             ]
         );

@@ -122,35 +122,34 @@ def test_factor_catalog_contains_param_factor_and_is_filterable():
     assert selected == ["volume_breakout_20_k15"]
 
 
-def test_alpha_catalog_contains_registered_alphas_and_is_filterable():
-    catalog = qfactors.alpha_catalog()
+def test_expression_collect_inputs_replace_inputs_and_alias():
+    expr = ((qfactors.col("close") + qfactors.col("open")) / qfactors.lit(2.0)).alias("mid")
 
-    row = catalog.filter(pl.col("alpha_name") == "alpha13").row(0, named=True)
-    assert row["expression"] == (
-        "mul(-1, rank(covariance(rank(field(close)), rank(field(volume)), 5)))"
+    assert expr.collect_inputs() == {"close", "open"}
+
+    remapped = expr.replace_inputs({"close": "adj_close", "open": "adj_open"})
+    df = pl.DataFrame(
+        {
+            "asset": ["A"],
+            "time": [1],
+            "adj_close": [12.0],
+            "adj_open": [10.0],
+        }
     )
-    assert row["input_fields"] == ["close", "volume"]
-    assert row["n_inputs"] == 2
-    assert row["lookback"] == 4
+    out = _with_alphas(df, [remapped])
 
-    selected = (
-        catalog.filter(pl.col("input_fields").list.contains("close"))
-        .filter(pl.col("lookback") <= 4)
-        .get_column("alpha_name")
-        .to_list()
-    )
-    assert "alpha13" in selected
+    assert out.columns == ["asset", "time", "adj_close", "adj_open", "mid"]
+    assert out.get_column("mid").to_list() == [11.0]
 
 
-def test_alpha_catalog_contains_worldquant101_set():
-    catalog = qfactors.alpha_catalog()
+def test_worldquant101_alphas_returns_expression_subset_with_aliases():
+    selected = qfactors.worldquant101_alphas({}, alphas=["alpha13", "alpha101"])
+    catalog = qfactors._worldquant101_alphas()
 
-    names = set(catalog.get_column("alpha_name").to_list())
-    assert {f"alpha{idx}" for idx in range(1, 102)}.issubset(names)
-
-    alpha100 = catalog.filter(pl.col("alpha_name") == "alpha100").row(0, named=True)
-    assert "subindustry" in alpha100["input_fields"]
-    assert "volume" in alpha100["input_fields"]
+    assert len(selected) == 2
+    assert set(catalog) == {f"alpha{idx}" for idx in range(1, 102)}
+    assert selected[0].collect_inputs() == {"close", "volume"}
+    assert "subindustry" in catalog["alpha100"].collect_inputs()
 
 
 def test_compute_panel_param_factor_matches_python_baseline():
@@ -214,20 +213,20 @@ def test_compute_panel_file_mode_matches_memory(tmp_path):
 def test_compute_alphas_alpha101_matches_python_baseline():
     df = _alpha_input_frame()
 
-    out = _compute_alphas(df, observation_times=[2, 1], alphas=["alpha101"])
+    out = _compute_alphas(df, alphas=_alpha_exprs(["alpha101"]))
 
     assert out.columns == ["time", "asset", "alpha101"]
     assert out.select(["time", "asset"]).rows() == [
-        (2, "A"),
-        (2, "B"),
         (1, "A"),
         (1, "B"),
+        (2, "A"),
+        (2, "B"),
     ]
     expected = [
-        _alpha101_baseline(df, 2, "A"),
-        _alpha101_baseline(df, 2, "B"),
         _alpha101_baseline(df, 1, "A"),
         _alpha101_baseline(df, 1, "B"),
+        _alpha101_baseline(df, 2, "A"),
+        _alpha101_baseline(df, 2, "B"),
     ]
     for actual, expected_value in zip(out.get_column("alpha101").to_list(), expected):
         assert actual == pytest.approx(expected_value)
@@ -237,11 +236,11 @@ def test_compute_alphas_file_mode_matches_memory(tmp_path):
     df = _alpha_input_frame()
     output_path = tmp_path / "alpha_panel.parquet"
 
-    memory = _compute_alphas(df, observation_times=[2], alphas=["alpha101"])
+    alphas = _alpha_exprs(["alpha101"])
+    memory = _compute_alphas(df, alphas=alphas)
     summary = _compute_alphas(
         df,
-        observation_times=[2],
-        alphas=["alpha101"],
+        alphas=alphas,
         output_path=str(output_path),
     )
     file_out = pl.read_parquet(output_path)
@@ -254,17 +253,42 @@ def test_compute_alphas_file_mode_matches_memory(tmp_path):
     assert file_out.equals(memory)
 
 
+def test_with_alphas_mixes_custom_and_worldquant_exprs_in_original_order():
+    df = _alpha_input_frame()
+    custom = (
+        (qfactors.col("close") - qfactors.col("open"))
+        / (qfactors.col("high") - qfactors.col("low") + qfactors.lit(0.001))
+    ).alias("custom")
+
+    out = _with_alphas(df, [custom, *_alpha_exprs(["alpha101"])])
+
+    assert out.select(["time", "asset"]).rows() == df.select(["time", "asset"]).rows()
+    assert out.columns == [
+        "asset",
+        "time",
+        "open",
+        "close",
+        "high",
+        "low",
+        "volume",
+        "industry",
+        "custom",
+        "alpha101",
+    ]
+    for actual, expected in zip(out.get_column("custom").to_list(), out.get_column("alpha101").to_list()):
+        assert actual == pytest.approx(expected)
+
+
 def test_compute_alphas_worldquant101_representative_extra_fields_smoke():
     df = _worldquant_input_frame(n_times=40)
 
     out = _compute_alphas(
         df,
-        observation_times=[40],
-        alphas=["alpha5", "alpha56", "alpha58", "alpha80"],
+        alphas=_alpha_exprs(["alpha5", "alpha56", "alpha58", "alpha80"]),
     )
 
     assert out.columns == ["time", "asset", "alpha5", "alpha56", "alpha58", "alpha80"]
-    assert out.select(["time", "asset"]).rows() == [
+    assert out.filter(pl.col("time") == 40).select(["time", "asset"]).rows() == [
         (40, "A"),
         (40, "B"),
         (40, "C"),
@@ -308,16 +332,29 @@ def _compute_panel(df, observation_times, factors, column_aliases=None, output_p
     )
 
 
-def _compute_alphas(df, observation_times, alphas, column_aliases=None, output_path=None):
+def _compute_alphas(df, alphas, column_aliases=None, output_path=None):
     return qfactors.compute_alphas(
         df,
         symbol_col="asset",
         time_col="time",
         alphas=alphas,
-        observation_times=observation_times,
         column_aliases=column_aliases,
         output_path=output_path,
     )
+
+
+def _with_alphas(df, alphas, column_aliases=None):
+    return qfactors.with_alphas(
+        df,
+        symbol_col="asset",
+        time_col="time",
+        alphas=alphas,
+        column_aliases=column_aliases,
+    )
+
+
+def _alpha_exprs(names):
+    return qfactors.worldquant101_alphas({}, alphas=names)
 
 
 def _phase2_input_frame():

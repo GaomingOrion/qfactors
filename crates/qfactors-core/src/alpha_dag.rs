@@ -1106,15 +1106,9 @@ enum DagVal {
     Scalar(f64),
 }
 
-pub(crate) fn eval_alphas(
-    resolved: &[(String, Expr)],
-    cs: &CellSet,
-) -> Result<Vec<(String, Vec<f64>)>> {
+pub(crate) fn eval_exprs(exprs: &[Expr], cs: &CellSet) -> Result<Vec<Vec<f64>>> {
     let mut dag = Dag::default();
-    let roots = resolved
-        .iter()
-        .map(|(_, expr)| dag.lower(expr))
-        .collect::<Vec<_>>();
+    let roots = exprs.iter().map(|expr| dag.lower(expr)).collect::<Vec<_>>();
     dag.fuse_single_use_transposes(&roots);
     dag.fuse_xs_output_transposes(&roots);
     dag.fuse_elementwise(&roots);
@@ -1122,10 +1116,10 @@ pub(crate) fn eval_alphas(
 
     // Materializing each root (transpose to Tn + clone) is independent per
     // alpha, so fan it out across alphas instead of a serial map.
-    Ok(resolved
+    Ok(exprs
         .par_iter()
         .zip(values)
-        .map(|((name, _), value)| (name.clone(), to_cells(&value, Layout::Tn, cs)))
+        .map(|(_, value)| to_cells(&value, Layout::Tn, cs))
         .collect())
 }
 
@@ -1372,6 +1366,7 @@ mod tests {
             sym_blocks,
             time_blocks,
             tn_order,
+            orig_index_tn: (0..n_cells).collect(),
             fields: fields
                 .into_iter()
                 .map(|(name, values)| (name, Arc::new(values)))

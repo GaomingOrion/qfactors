@@ -9,8 +9,8 @@ This manifest records the implementation defaults for the built-in `alpha1` thro
 - Source formula set: Kakushadze, "101 Formulaic Alphas", Appendix A.
 - Rust location: `crates/qfactors-factors/src/worldquant101.rs`, plus the previously
   existing `alpha6`, `alpha8`, `alpha12`, `alpha13`, and `alpha101` in `alphas.rs`.
-- Public Python surface: unchanged; use `qfactors.alpha_catalog()` and
-  `qfactors.compute_alphas(...)`.
+- Public Python surface: use `qfactors.worldquant101_alphas(...)` to obtain
+  expressions, then `qfactors.compute_alphas(...)` or `qfactors.with_alphas(...)`.
 
 ## Defaults
 

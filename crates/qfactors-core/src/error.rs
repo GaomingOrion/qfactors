@@ -63,6 +63,9 @@ pub enum QFactorsError {
     #[error("output column `{0}` conflicts with another output column")]
     OutputColumnConflict(String),
 
+    #[error("alpha expression is missing an alias")]
+    AlphaAliasRequired,
+
     #[error("invalid QF_ENGINE `{0}`; expected `tree` or `dag`")]
     InvalidAlphaEngine(String),
 

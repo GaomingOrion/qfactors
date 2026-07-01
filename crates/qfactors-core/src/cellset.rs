@@ -10,6 +10,7 @@ use crate::error::{QFactorsError, Result};
 use crate::factor::DType;
 
 const NT_INDEX: &str = "__qfactors_nt_index";
+const ORIG_INDEX: &str = "__qfactors_orig_index";
 
 #[derive(Debug, Clone)]
 pub struct CellSet {
@@ -17,6 +18,7 @@ pub struct CellSet {
     pub sym_blocks: Vec<Range<usize>>,
     pub time_blocks: Vec<Range<usize>>,
     pub tn_order: Vec<usize>,
+    pub orig_index_tn: Vec<usize>,
     pub fields: HashMap<String, Arc<Vec<f64>>>,
     pub symbols_tn: Column,
     pub times_tn: Column,
@@ -39,7 +41,8 @@ pub fn build_cellset(
     validate_structural_column(time_col, false)?;
     validate_fields(df, options, fields)?;
 
-    let sorted = sort_panel(df, options)?;
+    let indexed = df.with_row_index(ORIG_INDEX.into(), None)?;
+    let sorted = sort_panel(&indexed, options)?;
     let sym_blocks = sym_blocks(&sorted, options)?;
 
     // TN (time, symbol) ordering via polars' typed, multi-threaded sort instead of a
@@ -56,6 +59,13 @@ pub fn build_cellset(
         .into_no_null_iter()
         .map(|idx| idx as usize)
         .collect::<Vec<_>>();
+    let orig_index_tn = tn_sorted
+        .column(ORIG_INDEX)?
+        .as_materialized_series()
+        .idx()?
+        .into_no_null_iter()
+        .map(|idx| idx as usize)
+        .collect::<Vec<_>>();
     let symbols_tn = tn_sorted.column(&options.symbol_col)?.clone();
     let times_tn = tn_sorted.column(&options.time_col)?.clone();
     let (time_blocks, time_block_by_value) = time_blocks(&times_tn)?;
@@ -67,6 +77,7 @@ pub fn build_cellset(
         sym_blocks,
         time_blocks,
         tn_order,
+        orig_index_tn,
         fields,
         symbols_tn,
         times_tn,
@@ -197,6 +208,7 @@ mod tests {
         assert_eq!(cs.n_cells, 3);
         assert_eq!(cs.sym_blocks, [0..1, 1..3]);
         assert_eq!(cs.tn_order, [1, 0, 2]);
+        assert_eq!(cs.orig_index_tn, [0, 1, 2]);
         assert_eq!(cs.time_blocks, [0..1, 1..3]);
         assert_eq!(cs.fields["open"].as_slice(), [10.0, 20.0, 21.0]);
         assert_eq!(

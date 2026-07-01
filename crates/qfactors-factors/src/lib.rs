@@ -272,7 +272,7 @@ mod tests {
 
         let n_symbols = 6;
         let n_times = 260;
-        let out = memory_frame(compute_alphas(
+        let out = memory_frame(compute_alpha_names(
             synthetic_alpha_bench_frame(n_symbols, n_times)?,
             options(),
             alpha_names.clone(),
@@ -298,7 +298,7 @@ mod tests {
     fn alpha8_end_to_end_matches_reference_and_compact_edges() -> qfactors_core::Result<()> {
         let fixture = alpha8_fixture()?;
         let expected = reference_alpha8(&fixture);
-        let out = memory_frame(compute_alphas(
+        let out = memory_frame(compute_alpha_names(
             fixture.df,
             options(),
             vec!["alpha8".to_string()],
@@ -343,7 +343,7 @@ mod tests {
         let expected_alpha13 = reference_alpha13(&fixture, time);
         let expected_alpha101 = reference_alpha101(&fixture, time);
 
-        let out = memory_frame(compute_alphas(
+        let out = memory_frame(compute_alpha_names(
             fixture.df,
             options(),
             vec![
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn phase_b_group_alphas_match_independent_reference() -> qfactors_core::Result<()> {
-        let out = memory_frame(compute_alphas(
+        let out = memory_frame(compute_alpha_names(
             group_fixture()?,
             options(),
             vec![
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn alpha_missing_observation_time_keeps_schema() -> qfactors_core::Result<()> {
         let fixture = alpha8_fixture()?;
-        let out = memory_frame(compute_alphas(
+        let out = memory_frame(compute_alpha_names(
             fixture.df,
             options(),
             vec!["alpha8".to_string()],
@@ -455,7 +455,7 @@ mod tests {
         let started = Instant::now();
         let mut total_rows = 0usize;
         for _ in 0..repeats {
-            let out = memory_frame(compute_alphas(
+            let out = memory_frame(compute_alpha_names(
                 df.clone(),
                 options(),
                 alpha_names.clone(),
@@ -495,7 +495,7 @@ mod tests {
             "time".into(),
             [(n_times - 2) as i64, (n_times - 1) as i64, n_times as i64],
         );
-        let mut out = memory_frame(compute_alphas(
+        let mut out = memory_frame(compute_alpha_names(
             df,
             options(),
             alpha_names,
@@ -586,6 +586,55 @@ mod tests {
             ComputeResult::Memory(df) => Ok(df),
             ComputeResult::File(_) => panic!("expected memory result"),
         }
+    }
+
+    fn compute_alpha_names(
+        df: DataFrame,
+        options: ComputePanelOptions,
+        alpha_names: Vec<String>,
+        observation_times: Series,
+        output_path: Option<&str>,
+    ) -> qfactors_core::Result<ComputeResult> {
+        assert!(
+            output_path.is_none(),
+            "test helper only supports memory mode"
+        );
+        let registry = alpha_registry()?;
+        let alphas = alpha_names
+            .into_iter()
+            .map(|name| {
+                let descriptor = registry
+                    .get(&name)
+                    .ok_or_else(|| qfactors_core::QFactorsError::UnknownFactor(name.clone()))?;
+                Ok((name, (descriptor.build)()))
+            })
+            .collect::<qfactors_core::Result<Vec<_>>>()?;
+        let full = memory_frame(compute_alphas(df, options.clone(), alphas, None)?)?;
+        Ok(ComputeResult::Memory(sample_observation_times(
+            full,
+            &options.time_col,
+            observation_times,
+        )?))
+    }
+
+    #[allow(clippy::mutable_key_type)]
+    fn sample_observation_times(
+        df: DataFrame,
+        time_col: &str,
+        observation_times: Series,
+    ) -> qfactors_core::Result<DataFrame> {
+        let time = df.column(time_col)?;
+        let observations = observation_times.cast(time.dtype())?;
+        let mut indices = Vec::new();
+        for obs_index in 0..observations.len() {
+            let observation = observations.get(obs_index)?.into_static();
+            for row in 0..df.height() {
+                if time.get(row)?.into_static() == observation {
+                    indices.push(row as IdxSize);
+                }
+            }
+        }
+        Ok(df.take(&IdxCa::from_vec("idx".into(), indices))?)
     }
 
     fn options() -> ComputePanelOptions {

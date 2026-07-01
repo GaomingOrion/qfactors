@@ -1,12 +1,28 @@
 # qfactors
 
-qfactors is a Rust factor computation engine with Python bindings for Polars
-panels. It provides:
+qfactors is a Rust factor and alpha computation engine with Python bindings for
+Polars panels. It is built for research workflows that need Python ergonomics
+without moving the hot path out of Rust.
 
-- a Rust core for sorting, sampling, and computing panel factors;
-- procedural macros for registering factor kernels;
-- built-in factor and WorldQuant 101 alpha definitions;
-- a Python extension module that accepts and returns Polars DataFrames.
+## Why qfactors
+
+- **Polars-native Python workflow:** pass in a Polars DataFrame and get a Polars
+  DataFrame back. `with_alphas` appends results in the original row order, while
+  `compute_alphas` emits a full `(time, symbol)` panel for downstream scans.
+- **Rust execution core:** panel sorting, validation, rolling windows,
+  cross-sectional operators, and expression evaluation run in Rust with rayon
+  parallelism where it is already proven useful.
+- **Expression API for research iteration:** compose alphas with
+  `qfactors.col("close")`, `qfactors.lit(1.0)`, operators, windows, ranks,
+  neutralization, and `replace_inputs()` templates.
+- **WorldQuant 101 built in:** `worldquant101_alphas()` returns expression
+  objects for `alpha1` through `alpha101`, with documented project defaults and
+  input aliasing for adjusted or vendor-specific column names.
+- **Regression guarded:** every registered alpha is checked against a frozen
+  synthetic golden fixture at `1e-8` tolerance, so engine changes are reviewed
+  against stable numerical output.
+- **Extensible Rust kernels:** procedural macros register custom factor kernels
+  with windows, parameters, and multi-output support.
 
 The project is early-stage. APIs are usable for experimentation and internal
 research workflows, but should be treated as pre-1.0.
@@ -24,10 +40,12 @@ stable — a frozen golden baseline guards every change at `1e-8` tolerance.
   rolling sum/mean/decay) replacing per-window recomputation.
 - Global allocator (jemalloc on Unix, mimalloc on Windows).
 - WorldQuant 101 alphas (`alpha1`–`alpha101`).
+- v0.3.0 Python expression API: `PyExpr`, `with_alphas`, full-history
+  `compute_alphas`, input replacement templates, and type stubs.
 
-**In progress (0.2.x)**
+**Experimental**
 
-- Experimental DAG evaluator (`QF_ENGINE=dag`) with hash-consed common
+- DAG evaluator (`QF_ENGINE=dag`) with hash-consed common
   subexpression elimination and slot-reuse. It is gated behind a flag and
   benchmarked against the default tree engine; an optimization is promoted only
   when it demonstrably beats the current default.
@@ -36,7 +54,7 @@ stable — a frozen golden baseline guards every change at `1e-8` tolerance.
 
 - Node-level parallelism and fewer layout transposes in the evaluator.
 - Publish to PyPI and crates.io.
-- Expanded factor / alpha catalog and API documentation.
+- Expanded factor / alpha API documentation.
 
 ## Installation
 
@@ -77,32 +95,48 @@ df = pl.DataFrame(
     }
 )
 
-catalog = qfactors.alpha_catalog()
+alphas = qfactors.worldquant101_alphas({}, alphas=["alpha101"])
 out = qfactors.compute_alphas(
     df=df,
     symbol_col="asset",
     time_col="time",
-    alphas=["alpha101"],
-    observation_times=[2],
+    alphas=alphas,
+)
+
+df_with_alpha = qfactors.with_alphas(
+    df=df,
+    symbol_col="asset",
+    time_col="time",
+    alphas=[
+        (
+            (qfactors.col("close") - qfactors.col("open"))
+            / (qfactors.col("high") - qfactors.col("low") + qfactors.lit(0.001))
+        ).alias("intraday_return")
+    ],
 )
 ```
 
-`compute_panel` computes registered factor kernels. `compute_alphas` computes
-registered alpha expressions. Both functions return a Polars DataFrame by
-default, or a summary dict when `output_path` is provided.
+`compute_panel` computes registered factor kernels at requested observation
+times. `compute_alphas` computes expression alphas over the full panel and
+returns a Polars DataFrame by default, or a summary dict when `output_path` is
+provided. `with_alphas` appends expression outputs to the input DataFrame in its
+original row order.
 
 ## Public API
 
 Python functions:
 
 - `qfactors.compute_panel(df, symbol_col, time_col, factors, observation_times, column_aliases=None, output_path=None)`
-- `qfactors.compute_alphas(df, symbol_col, time_col, alphas, observation_times, column_aliases=None, output_path=None)`
+- `qfactors.compute_alphas(df, symbol_col, time_col, alphas, column_aliases=None, output_path=None)`
+- `qfactors.with_alphas(df, symbol_col, time_col, alphas, column_aliases=None)`
+- `qfactors.col(name)`, `qfactors.lit(value)`, and expression operators
+- `qfactors.worldquant101_alphas(input_alias, alphas=None)`
 - `qfactors.factor_catalog()`
-- `qfactors.alpha_catalog()`
 
 Input rules:
 
-- `symbol_col`, `time_col`, and `observation_times` cannot contain nulls.
+- `symbol_col`, `time_col`, and `compute_panel` observation times cannot contain
+  nulls.
 - Structural NaN values are rejected.
 - Float input nulls are converted to NaN so factor logic can propagate missing
   data.
@@ -125,7 +159,7 @@ engine remains the default until the DAG path is fully benchmarked and promoted.
 
 ## WorldQuant 101
 
-The built-in alpha catalog includes `alpha1` through `alpha101`. See
+The built-in alpha library includes `alpha1` through `alpha101`. See
 [docs/worldquant101.md](docs/worldquant101.md) for supported input fields,
 coverage tiers, and implementation defaults.
 
@@ -145,6 +179,9 @@ uv run pytest
 ```
 
 See [docs/development.md](docs/development.md) for more detail.
+
+For alpha expression construction and execution details, see
+[docs/expression_api.md](docs/expression_api.md).
 
 ## License
 

@@ -1114,6 +1114,7 @@ mod tests {
             sym_blocks,
             time_blocks,
             tn_order: (0..n_cells).collect(),
+            orig_index_tn: (0..n_cells).collect(),
             fields: fields
                 .into_iter()
                 .map(|(name, values)| (name, Arc::new(values)))

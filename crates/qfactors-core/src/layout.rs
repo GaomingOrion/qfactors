@@ -42,6 +42,7 @@ mod tests {
             sym_blocks: vec![0..1, 1..3],
             time_blocks: vec![0..1, 1..3],
             tn_order: vec![1, 0, 2],
+            orig_index_tn: vec![1, 0, 2],
             fields: HashMap::new(),
             symbols_tn: Column::new("asset".into(), ["B", "A", "B"]),
             times_tn: Column::new("time".into(), [1i64, 2, 2]),

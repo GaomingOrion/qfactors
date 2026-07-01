@@ -9,12 +9,20 @@ Alphas", Appendix A, with project-specific defaults documented here.
 Use:
 
 ```python
-qfactors.alpha_catalog()
-qfactors.compute_alphas(...)
+alphas = qfactors.worldquant101_alphas(
+    {"close": "adj_close"},
+    alphas=["alpha13", "alpha101"],
+)
+qfactors.compute_alphas(df, "asset", "time", alphas)
 ```
 
-`alpha_catalog()` returns the registered alpha names, expressions, required
-input fields, input count, and lookback metadata.
+`worldquant101_alphas(input_alias, alphas=None)` returns expression objects for
+the built-in `alpha1` through `alpha101` set. `input_alias` maps canonical input
+names such as `close` to physical DataFrame columns such as `adj_close`; pass an
+empty dict for identity mapping. `compute_alphas()` evaluates those expressions
+over the full `(time, symbol)` panel, while `with_alphas()` appends them to the
+input DataFrame in original row order. See
+[expression_api.md](expression_api.md) for custom expression construction.
 
 ## Defaults
 

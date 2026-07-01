@@ -6,6 +6,14 @@ use crate::expr::{CmpOp, Expr};
 pub struct A(Expr);
 
 impl A {
+    pub fn from_expr(expr: Expr) -> Self {
+        Self(expr)
+    }
+
+    pub fn expr(&self) -> &Expr {
+        &self.0
+    }
+
     pub fn into_expr(self) -> Expr {
         self.0
     }

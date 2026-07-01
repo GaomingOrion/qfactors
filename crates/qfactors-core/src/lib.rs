@@ -19,7 +19,7 @@ pub use alpha::A;
 pub use alpha_catalog::alpha_catalog;
 pub use alpha_registry::{AlphaDescriptor, AlphaRegistry, alpha_registry};
 pub use column_store::ColumnStore;
-pub use compute_alpha::compute_alphas;
+pub use compute_alpha::{compute_alphas, eval_exprs, with_alphas};
 pub use compute_panel::{ComputePanelOptions, compute_panel};
 pub use compute_sink::{ComputeResult, ComputeSummary};
 pub use error::{QFactorsError, Result};

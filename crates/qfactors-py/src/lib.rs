@@ -5,10 +5,15 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use pyo3_polars::{PyDataFrame, PySeries};
+use qfactors_core::alpha_registry::ALPHA_DESCRIPTORS;
 use qfactors_core::{
-    ComputePanelOptions, ComputeResult, ComputeSummary, QFactorsError, alpha_catalog,
+    ComputePanelOptions, ComputeResult, ComputeSummary, Expr, QFactorsError,
     compute_alphas as compute_alphas_core, compute_panel as compute_panel_core, factor_catalog,
+    with_alphas as with_alphas_core,
 };
+
+mod expr;
+use expr::PyExpr;
 
 // Rust-side allocations (the large per-node `Vec<f64>` buffers in the alpha engine) go
 // through jemalloc on unix and mimalloc (v3, the crate default) on Windows. This only
@@ -79,8 +84,8 @@ fn factor_catalog_py() -> PyResult<PyDataFrame> {
 /// Compute registered alpha expressions on a Polars panel.
 ///
 /// The input DataFrame must contain the symbol and time columns plus every field
-/// required by the requested alphas. Results are sampled at `observation_times`.
-/// Float input nulls become NaN; structural columns and observation times must
+/// required by the requested alphas. The result always contains the full
+/// (time, symbol) panel. Float input nulls become NaN; structural columns must
 /// not contain nulls. If `output_path` is set, the result is written as Parquet
 /// and a summary dict is returned. Otherwise a Polars DataFrame is returned.
 #[pyfunction(name = "compute_alphas", signature = (
@@ -88,7 +93,6 @@ fn factor_catalog_py() -> PyResult<PyDataFrame> {
     symbol_col,
     time_col,
     alphas,
-    observation_times,
     column_aliases = None,
     output_path = None
 ))]
@@ -98,31 +102,95 @@ fn compute_alphas_py(
     df: PyDataFrame,
     symbol_col: &str,
     time_col: &str,
-    alphas: Vec<String>,
-    observation_times: &Bound<'_, PyAny>,
+    alphas: Vec<Py<PyExpr>>,
     column_aliases: Option<HashMap<String, String>>,
     output_path: Option<&str>,
 ) -> PyResult<Py<PyAny>> {
-    let observation_times = observation_series_from_py(py, observation_times)?;
     let options = ComputePanelOptions {
         symbol_col: symbol_col.to_string(),
         time_col: time_col.to_string(),
         column_aliases: column_aliases.unwrap_or_default(),
     };
+    let alphas = alpha_specs_from_py(py, alphas).map_err(to_py_err)?;
 
-    let result = compute_alphas_core(df.into(), options, alphas, observation_times, output_path)
-        .map_err(to_py_err)?;
+    let result = compute_alphas_core(df.into(), options, alphas, output_path).map_err(to_py_err)?;
     match result {
         ComputeResult::Memory(df) => Ok(PyDataFrame(df).into_pyobject(py)?.unbind()),
         ComputeResult::File(summary) => summary_to_py(py, summary),
     }
 }
 
-/// Return metadata for all registered alpha expressions.
-#[pyfunction(name = "alpha_catalog")]
-fn alpha_catalog_py() -> PyResult<PyDataFrame> {
-    qfactors_factors::ensure_linked();
-    alpha_catalog().map(PyDataFrame).map_err(to_py_err)
+/// Append alpha expression outputs to the input DataFrame in original row order.
+#[pyfunction(name = "with_alphas", signature = (
+    df,
+    symbol_col,
+    time_col,
+    alphas,
+    column_aliases = None
+))]
+fn with_alphas_py(
+    py: Python<'_>,
+    df: PyDataFrame,
+    symbol_col: &str,
+    time_col: &str,
+    alphas: Vec<Py<PyExpr>>,
+    column_aliases: Option<HashMap<String, String>>,
+) -> PyResult<PyDataFrame> {
+    let options = ComputePanelOptions {
+        symbol_col: symbol_col.to_string(),
+        time_col: time_col.to_string(),
+        column_aliases: column_aliases.unwrap_or_default(),
+    };
+    let alphas = alpha_specs_from_py(py, alphas).map_err(to_py_err)?;
+
+    with_alphas_core(df.into(), options, alphas)
+        .map(PyDataFrame)
+        .map_err(to_py_err)
+}
+
+#[pyfunction(name = "_worldquant101_alphas")]
+fn worldquant101_alphas_dict_py(py: Python<'_>) -> PyResult<Py<PyAny>> {
+    let dict = PyDict::new(py);
+    for (name, expr) in worldquant101_exprs() {
+        dict.set_item(&name, PyExpr::named(&name, expr))?;
+    }
+    Ok(dict.into_any().unbind())
+}
+
+#[pyfunction(name = "worldquant101_alphas", signature = (input_alias, alphas = None))]
+fn worldquant101_alphas_py(
+    input_alias: HashMap<String, String>,
+    alphas: Option<Vec<String>>,
+) -> PyResult<Vec<PyExpr>> {
+    let input_alias = input_alias.into_iter().collect();
+    let all = worldquant101_exprs();
+    let selected = match alphas {
+        Some(names) => {
+            let by_name = all.into_iter().collect::<HashMap<_, _>>();
+            names
+                .into_iter()
+                .map(|name| {
+                    let expr = by_name
+                        .get(&name)
+                        .cloned()
+                        .ok_or_else(|| QFactorsError::UnknownFactor(name.clone()))?;
+                    Ok((name, expr))
+                })
+                .collect::<qfactors_core::Result<Vec<_>>>()
+                .map_err(to_py_err)?
+        }
+        None => all,
+    };
+
+    Ok(selected
+        .into_iter()
+        .map(|(name, expr)| {
+            PyExpr::named(
+                &name,
+                qfactors_core::expr::rename_fields(&expr, &input_alias),
+            )
+        })
+        .collect())
 }
 
 fn observation_series_from_py(
@@ -146,14 +214,54 @@ fn summary_to_py(py: Python<'_>, summary: ComputeSummary) -> PyResult<Py<PyAny>>
     Ok(dict.into_any().unbind())
 }
 
+fn alpha_specs_from_py(
+    py: Python<'_>,
+    alphas: Vec<Py<PyExpr>>,
+) -> qfactors_core::Result<Vec<(String, Expr)>> {
+    alphas
+        .into_iter()
+        .map(|alpha| {
+            let alpha = alpha.borrow(py);
+            let name = alpha
+                .output_name()
+                .ok_or(QFactorsError::AlphaAliasRequired)?
+                .to_string();
+            Ok((name, alpha.expr()))
+        })
+        .collect()
+}
+
+fn worldquant101_exprs() -> Vec<(String, Expr)> {
+    qfactors_factors::ensure_linked();
+    let mut out = ALPHA_DESCRIPTORS
+        .iter()
+        .map(|factory| factory())
+        .filter(|descriptor| is_worldquant101_name(descriptor.name))
+        .map(|descriptor| (descriptor.name.to_string(), (descriptor.build)()))
+        .collect::<Vec<_>>();
+    out.sort_by_key(|item| alpha_number(&item.0));
+    out
+}
+
+fn is_worldquant101_name(name: &str) -> bool {
+    alpha_number(name).is_some_and(|number| (1..=101).contains(&number))
+}
+
+fn alpha_number(name: &str) -> Option<usize> {
+    name.strip_prefix("alpha")?.parse().ok()
+}
+
 #[pymodule]
 fn qfactors(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     qfactors_factors::ensure_linked();
+    expr::register(module)?;
     module.add_function(wrap_pyfunction!(roundtrip, module)?)?;
     module.add_function(wrap_pyfunction!(compute_panel_py, module)?)?;
     module.add_function(wrap_pyfunction!(factor_catalog_py, module)?)?;
     module.add_function(wrap_pyfunction!(compute_alphas_py, module)?)?;
-    module.add_function(wrap_pyfunction!(alpha_catalog_py, module)?)?;
+    module.add_function(wrap_pyfunction!(with_alphas_py, module)?)?;
+    module.add_function(wrap_pyfunction!(worldquant101_alphas_dict_py, module)?)?;
+    module.add_function(wrap_pyfunction!(worldquant101_alphas_py, module)?)?;
     Ok(())
 }
 
