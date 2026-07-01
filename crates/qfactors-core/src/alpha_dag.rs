@@ -471,7 +471,10 @@ impl Dag {
                 // installed sequentially afterwards.
                 let computed = chunk
                     .par_iter()
-                    .map(|&id| self.eval_node(id, &slots, cs).map(|value| (id, Arc::new(value))))
+                    .map(|&id| {
+                        self.eval_node(id, &slots, cs)
+                            .map(|value| (id, Arc::new(value)))
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 for (id, value) in computed {
                     slots[id.index()] = Some(value);

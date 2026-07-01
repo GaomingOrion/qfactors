@@ -879,7 +879,15 @@ pub(crate) fn group_rank(
     output: Layout,
     cs: &CellSet,
 ) -> Vec<f64> {
-    xs_per_group(values, values_layout, groups, groups_layout, output, cs, rank_pairs)
+    xs_per_group(
+        values,
+        values_layout,
+        groups,
+        groups_layout,
+        output,
+        cs,
+        rank_pairs,
+    )
 }
 
 pub(crate) fn group_neutralize(
@@ -890,13 +898,21 @@ pub(crate) fn group_neutralize(
     output: Layout,
     cs: &CellSet,
 ) -> Vec<f64> {
-    xs_per_group(values, values_layout, groups, groups_layout, output, cs, |present| {
-        let mean = present.iter().map(|(_, value)| value).sum::<f64>() / present.len() as f64;
-        present
-            .iter()
-            .map(|(idx, value)| (*idx, value - mean))
-            .collect()
-    })
+    xs_per_group(
+        values,
+        values_layout,
+        groups,
+        groups_layout,
+        output,
+        cs,
+        |present| {
+            let mean = present.iter().map(|(_, value)| value).sum::<f64>() / present.len() as f64;
+            present
+                .iter()
+                .map(|(idx, value)| (*idx, value - mean))
+                .collect()
+        },
+    )
 }
 
 fn rank_pairs(present: &[(usize, f64)]) -> Vec<(usize, f64)> {

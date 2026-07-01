@@ -13,7 +13,10 @@ pub fn nt_to_tn(values: &[f64], cs: &CellSet) -> Vec<f64> {
     // Pure gather over a permutation: embarrassingly parallel. Nested inside the
     // DAG's per-level par_iter, rayon's work-stealing only spreads this across
     // cores when the enclosing level is too narrow to keep them busy.
-    cs.tn_order.par_iter().map(|&nt_idx| values[nt_idx]).collect()
+    cs.tn_order
+        .par_iter()
+        .map(|&nt_idx| values[nt_idx])
+        .collect()
 }
 
 pub fn tn_to_nt(values: &[f64], cs: &CellSet) -> Vec<f64> {

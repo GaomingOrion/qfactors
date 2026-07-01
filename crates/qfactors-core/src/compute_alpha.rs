@@ -49,7 +49,9 @@ pub fn compute_alphas(
     // cloning the shared index columns, instead of slicing every observation into
     // its own frame and vstacking them.
     if output_path.is_none() && is_full_output(&observations, &cs) {
-        return Ok(ComputeResult::Memory(build_full_frame(&cs, results, &options)?));
+        return Ok(ComputeResult::Memory(build_full_frame(
+            &cs, results, &options,
+        )?));
     }
 
     let mut sink = ComputeSink::for_output(output_path);
@@ -185,7 +187,11 @@ fn build_full_frame(
     columns.push(symbol);
 
     for (name, values) in results {
-        columns.push(Float64Chunked::from_vec(name.into(), values).into_series().into_column());
+        columns.push(
+            Float64Chunked::from_vec(name.into(), values)
+                .into_series()
+                .into_column(),
+        );
     }
 
     Ok(DataFrame::new_infer_height(columns)?)
