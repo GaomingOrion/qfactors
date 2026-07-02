@@ -12,7 +12,6 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-linkme.workspace = true
 polars.workspace = true
 rayon.workspace = true
 thiserror.workspace = true

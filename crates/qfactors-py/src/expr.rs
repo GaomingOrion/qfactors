@@ -4,42 +4,42 @@ use pyo3::class::basic::CompareOp;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PySet;
+use qfactors_core::Expr;
 use qfactors_core::alpha;
 use qfactors_core::expr::{collect_fields, rename_fields};
-use qfactors_core::{A, Expr};
 
 #[pyclass(module = "qfactors", skip_from_py_object)]
 #[derive(Clone)]
 pub(crate) struct PyExpr {
-    inner: A,
+    inner: Expr,
     alias: Option<String>,
 }
 
 impl PyExpr {
-    pub(crate) fn new(inner: A) -> Self {
+    pub(crate) fn new(inner: Expr) -> Self {
         Self { inner, alias: None }
     }
 
     pub(crate) fn named(name: &str, expr: Expr) -> Self {
         Self {
-            inner: A::from_expr(expr),
+            inner: expr,
             alias: Some(name.to_string()),
         }
     }
 
-    pub(crate) fn output_name(&self) -> Option<&str> {
+    pub(crate) fn output_name_ref(&self) -> Option<&str> {
         self.alias.as_deref()
     }
 
     pub(crate) fn expr(&self) -> Expr {
-        self.inner.expr().clone()
+        self.inner.clone()
     }
 
-    fn unary(&self, op: impl FnOnce(A) -> A) -> Self {
+    fn unary(&self, op: impl FnOnce(Expr) -> Expr) -> Self {
         Self::new(op(self.inner.clone()))
     }
 
-    fn binary(&self, rhs: &PyExpr, op: impl FnOnce(A, A) -> A) -> Self {
+    fn binary(&self, rhs: &PyExpr, op: impl FnOnce(Expr, Expr) -> Expr) -> Self {
         Self::new(op(self.inner.clone(), rhs.inner.clone()))
     }
 }
@@ -55,13 +55,17 @@ impl PyExpr {
 
     fn collect_inputs<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PySet>> {
         let mut fields = BTreeSet::new();
-        collect_fields(self.inner.expr(), &mut fields);
+        collect_fields(&self.inner, &mut fields);
         PySet::new(py, fields)
+    }
+
+    fn output_name(&self) -> Option<String> {
+        self.alias.clone()
     }
 
     fn replace_inputs(&self, names: BTreeMap<String, String>) -> Self {
         Self {
-            inner: A::from_expr(rename_fields(self.inner.expr(), &names)),
+            inner: rename_fields(&self.inner, &names),
             alias: self.alias.clone(),
         }
     }
@@ -100,7 +104,7 @@ impl PyExpr {
     }
 
     fn ts_sum(&self, days: usize) -> Self {
-        self.unary(|x| alpha::sum(x, days))
+        self.unary(|x| alpha::ts_sum(x, days))
     }
 
     fn ts_mean(&self, days: usize) -> Self {
@@ -136,7 +140,23 @@ impl PyExpr {
     }
 
     fn ts_std(&self, days: usize) -> Self {
-        self.unary(|x| alpha::stddev(x, days))
+        self.unary(|x| alpha::ts_std(x, days))
+    }
+
+    fn slope(&self, days: usize) -> Self {
+        self.unary(|x| alpha::slope(x, days))
+    }
+
+    fn rsquare(&self, days: usize) -> Self {
+        self.unary(|x| alpha::rsquare(x, days))
+    }
+
+    fn resi(&self, days: usize) -> Self {
+        self.unary(|x| alpha::resi(x, days))
+    }
+
+    fn quantile(&self, days: usize, q: f64) -> Self {
+        self.unary(|x| alpha::quantile(x, days, q))
     }
 
     fn decay_linear(&self, days: usize) -> Self {
@@ -176,20 +196,20 @@ impl PyExpr {
 
     fn __repr__(&self) -> String {
         match &self.alias {
-            Some(alias) => format!("PyExpr(alias={alias:?}, expr={})", self.inner.expr()),
-            None => format!("PyExpr(expr={})", self.inner.expr()),
+            Some(alias) => format!("PyExpr(alias={alias:?}, expr={})", self.inner),
+            None => format!("PyExpr(expr={})", self.inner),
         }
     }
 }
 
 #[pyfunction]
 pub(crate) fn col(name: &str) -> PyExpr {
-    PyExpr::new(alpha::field(name))
+    PyExpr::new(alpha::col(name))
 }
 
 #[pyfunction]
 pub(crate) fn lit(value: f64) -> PyExpr {
-    PyExpr::new(alpha::constant(value))
+    PyExpr::new(alpha::lit(value))
 }
 
 #[pyfunction]
@@ -209,7 +229,7 @@ pub(crate) fn power(lhs: PyRef<'_, PyExpr>, rhs: PyRef<'_, PyExpr>) -> PyExpr {
 
 #[pyfunction]
 pub(crate) fn signed_power(lhs: PyRef<'_, PyExpr>, rhs: PyRef<'_, PyExpr>) -> PyExpr {
-    lhs.binary(&rhs, alpha::signedpower)
+    lhs.binary(&rhs, alpha::signed_power)
 }
 
 #[pyfunction]

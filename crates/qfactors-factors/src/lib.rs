@@ -1,5 +1,3 @@
-use qfactors_macros::factor;
-
 // Bench/test builds use the same global allocator as the production cdylib so
 // `synthetic_alpha_benchmark` numbers reflect jemalloc/mimalloc. `cfg(test)` keeps it out
 // of the library object linked into qfactors-py (which sets its own), avoiding a duplicate
@@ -12,28 +10,9 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-pub mod alphas;
-pub mod worldquant101;
+pub mod worldquant_alpha101;
 
-pub fn ensure_linked() {}
-
-#[factor(window = 60)]
-pub fn ret(open: &[f64], close: &[f64]) -> f64 {
-    close[close.len() - 1] / open[0] - 1.0
-}
-
-#[factor(
-    windows = [20, 60],
-    params = [
-        { name = "k15", k = 1.5 },
-        { name = "k20", k = 2.0 },
-    ]
-)]
-pub fn volume_breakout(volume: &[f64], k: f64) -> f64 {
-    let last = volume[volume.len() - 1];
-    let mean = volume.iter().sum::<f64>() / volume.len() as f64;
-    if last > k * mean { 1.0 } else { 0.0 }
-}
+pub use worldquant_alpha101::worldquant_alpha101;
 
 #[cfg(test)]
 mod tests {
@@ -43,232 +22,44 @@ mod tests {
     use std::time::Instant;
 
     use polars::prelude::*;
-    use qfactors_core::{
-        ComputePanelOptions, ComputeResult, Result, alpha_registry, compute_alphas, compute_panel,
-        factor_catalog,
-    };
+    use qfactors_core::{ComputePanelOptions, ComputeResult, Expr, QFactorsError, compute_alphas};
 
     use super::*;
 
-    #[factor(windows = [2, 3])]
-    fn delta(close: &[f64]) -> f64 {
-        close[close.len() - 1] - close[0]
+    fn worldquant_alpha_map() -> HashMap<String, Expr> {
+        worldquant_alpha101().into_iter().collect()
     }
 
-    #[factor(window = 2, outputs = ["first", "last"])]
-    fn bounds(close: &[f64]) -> (f64, f64) {
-        (close[0], close[close.len() - 1])
-    }
-
-    #[factor(window = 2)]
-    fn checked_delta(close: &[f64]) -> Result<f64> {
-        Ok(close[close.len() - 1] - close[0])
-    }
-
-    #[test]
-    fn ret_descriptor_computes_valid_and_insufficient_windows() -> qfactors_core::Result<()> {
-        let asset = (0..61).map(|_| "A").chain(["B"]).collect::<Vec<_>>();
-        let time = (1i64..=61).chain([61]).collect::<Vec<_>>();
-        let open = (1..=61)
-            .map(|value| value as f64)
-            .chain([100.0])
+    fn worldquant_alpha_names_sorted() -> Vec<String> {
+        let mut names = worldquant_alpha101()
+            .into_iter()
+            .map(|(name, _)| name)
             .collect::<Vec<_>>();
-        let close = (2..=62)
-            .map(|value| value as f64)
-            .chain([110.0])
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn worldquant_alpha101_builder_returns_exact_name_set() {
+        let mut names = worldquant_alpha101()
+            .into_iter()
+            .map(|(name, _)| name)
             .collect::<Vec<_>>();
-        let df = df!(
-            "asset" => asset,
-            "time" => time,
-            "open" => open,
-            "close" => close,
-        )?;
-        let out = memory_frame(compute_panel(
-            df,
-            options(),
-            vec!["ret".to_string()],
-            Series::new("time".into(), [61i64]),
-            None,
-        )?)?;
-        let values = out
-            .column("ret")?
-            .try_f64()
-            .expect("ret is f64")
-            .into_no_null_iter()
+        names.sort();
+
+        let mut expected = (1..=101)
+            .map(|idx| format!("alpha{idx}"))
             .collect::<Vec<_>>();
+        expected.sort();
 
-        assert_eq!(values[0], 62.0 / 2.0 - 1.0);
-        assert!(values[1].is_nan());
-
-        Ok(())
+        assert_eq!(names, expected);
     }
 
     #[test]
-    fn macro_generated_factors_support_windows_outputs_and_result() -> qfactors_core::Result<()> {
-        let df = df!(
-            "asset" => ["A", "A", "A"],
-            "time" => [1i64, 2, 3],
-            "open" => [10.0, 11.0, 12.0],
-            "close" => [20.0, 23.0, 27.0],
-        )?;
-        let out = memory_frame(compute_panel(
-            df,
-            options(),
-            vec![
-                "delta_2".to_string(),
-                "delta_3".to_string(),
-                "bounds".to_string(),
-                "checked_delta".to_string(),
-            ],
-            Series::new("time".into(), [3i64]),
-            None,
-        )?)?;
-
-        assert_eq!(
-            out.column("delta_2")?
-                .try_f64()
-                .expect("delta_2 is f64")
-                .get(0),
-            Some(4.0)
-        );
-        assert_eq!(
-            out.column("delta_3")?
-                .try_f64()
-                .expect("delta_3 is f64")
-                .get(0),
-            Some(7.0)
-        );
-        assert_eq!(
-            out.column("bounds.first")?
-                .try_f64()
-                .expect("bounds.first is f64")
-                .get(0),
-            Some(23.0)
-        );
-        assert_eq!(
-            out.column("bounds.last")?
-                .try_f64()
-                .expect("bounds.last is f64")
-                .get(0),
-            Some(27.0)
-        );
-        assert_eq!(
-            out.column("checked_delta")?
-                .try_f64()
-                .expect("checked_delta is f64")
-                .get(0),
-            Some(4.0)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn macro_generated_param_factors_are_cataloged_and_computed() -> qfactors_core::Result<()> {
-        let volume = (1..=60)
-            .map(|idx| if idx == 60 { 100.0 } else { 10.0 })
-            .collect::<Vec<_>>();
-        let df = df!(
-            "asset" => ["A"; 60],
-            "time" => (1i64..=60).collect::<Vec<_>>(),
-            "open" => vec![1.0; 60],
-            "close" => vec![2.0; 60],
-            "volume" => volume,
-        )?;
-        let catalog = factor_catalog()?;
-        let row_idx = catalog
-            .column("factor_name")?
-            .try_str()
-            .expect("factor_name is string")
-            .iter()
-            .position(|value| value == Some("volume_breakout_20_k15"))
-            .expect("volume_breakout_20_k15 is registered");
-        assert_eq!(
-            catalog
-                .column("param_set")?
-                .try_str()
-                .expect("param_set is string")
-                .get(row_idx),
-            Some("k15")
-        );
-        assert_eq!(
-            catalog
-                .column("param_k")?
-                .try_f64()
-                .expect("param_k is f64")
-                .get(row_idx),
-            Some(1.5)
-        );
-
-        let out = memory_frame(compute_panel(
-            df,
-            options(),
-            vec![
-                "volume_breakout_20_k15".to_string(),
-                "volume_breakout_20_k20".to_string(),
-                "volume_breakout_60_k15".to_string(),
-            ],
-            Series::new("time".into(), [60i64]),
-            None,
-        )?)?;
-
-        assert_eq!(
-            out.column("volume_breakout_20_k15")?
-                .try_f64()
-                .expect("volume_breakout_20_k15 is f64")
-                .get(0),
-            Some(1.0)
-        );
-        assert_eq!(
-            out.column("volume_breakout_20_k20")?
-                .try_f64()
-                .expect("volume_breakout_20_k20 is f64")
-                .get(0),
-            Some(1.0)
-        );
-        assert_eq!(
-            out.column("volume_breakout_60_k15")?
-                .try_f64()
-                .expect("volume_breakout_60_k15 is f64")
-                .get(0),
-            Some(1.0)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn alpha8_is_registered() -> qfactors_core::Result<()> {
-        assert!(alpha_registry()?.get("alpha8").is_some());
-        Ok(())
-    }
-
-    #[test]
-    fn phase_b_alphas_are_registered() -> qfactors_core::Result<()> {
-        let registry = alpha_registry()?;
-        for name in [
-            "alpha6",
-            "alpha12",
-            "alpha13",
-            "alpha101",
-            "group_returns_rank",
-            "industry_neutral_close",
-        ] {
-            assert!(registry.get(name).is_some(), "{name} is registered");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn worldquant101_alphas_are_registered_and_run_on_complete_synthetic_panel()
-    -> qfactors_core::Result<()> {
-        let registry = alpha_registry()?;
+    fn worldquant_alpha101_alphas_run_on_complete_synthetic_panel() -> qfactors_core::Result<()> {
         let alpha_names = (1..=101)
             .map(|idx| format!("alpha{idx}"))
             .collect::<Vec<_>>();
-        for name in &alpha_names {
-            assert!(registry.get(name).is_some(), "{name} is registered");
-        }
 
         let n_symbols = 6;
         let n_times = 260;
@@ -382,42 +173,6 @@ mod tests {
     }
 
     #[test]
-    fn phase_b_group_alphas_match_independent_reference() -> qfactors_core::Result<()> {
-        let out = memory_frame(compute_alpha_names(
-            group_fixture()?,
-            options(),
-            vec![
-                "group_returns_rank".to_string(),
-                "industry_neutral_close".to_string(),
-            ],
-            Series::new("time".into(), [2i64]),
-            None,
-        )?)?;
-
-        assert_eq!(
-            time_asset_rows(&out)?,
-            [
-                (2, "A".to_string()),
-                (2, "B".to_string()),
-                (2, "C".to_string()),
-                (2, "D".to_string())
-            ]
-        );
-        let group_rank = column_values(&out, "group_returns_rank")?;
-        assert_f64_eq(group_rank[0], 0.75);
-        assert_f64_eq(group_rank[1], 0.75);
-        assert_f64_eq(group_rank[2], 1.0);
-        assert!(group_rank[3].is_nan());
-
-        let neutralized = column_values(&out, "industry_neutral_close")?;
-        assert_f64_eq(neutralized[0], -5.5);
-        assert_f64_eq(neutralized[1], 5.5);
-        assert_f64_eq(neutralized[2], 0.0);
-        assert!(neutralized[3].is_nan());
-        Ok(())
-    }
-
-    #[test]
     fn alpha_missing_observation_time_keeps_schema() -> qfactors_core::Result<()> {
         let fixture = alpha8_fixture()?;
         let out = memory_frame(compute_alpha_names(
@@ -440,11 +195,7 @@ mod tests {
         let n_times = bench_env_usize("QFACTORS_BENCH_TIMES", 260);
         let repeats = bench_env_usize("QFACTORS_BENCH_REPEATS", 3);
         let df = synthetic_alpha_bench_frame(n_symbols, n_times)?;
-        let mut alpha_names = alpha_registry()?
-            .descriptors()
-            .map(|descriptor| descriptor.name.to_string())
-            .collect::<Vec<_>>();
-        alpha_names.sort();
+        let alpha_names = worldquant_alpha_names_sorted();
 
         println!(
             "manual run: QFACTORS_BENCH_SYMBOLS={n_symbols} QFACTORS_BENCH_TIMES={n_times} \
@@ -485,11 +236,7 @@ mod tests {
         let n_symbols = 40;
         let n_times = 700;
         let df = synthetic_alpha_bench_frame(n_symbols, n_times)?;
-        let mut alpha_names = alpha_registry()?
-            .descriptors()
-            .map(|descriptor| descriptor.name.to_string())
-            .collect::<Vec<_>>();
-        alpha_names.sort();
+        let alpha_names = worldquant_alpha_names_sorted();
 
         let observation_times = Series::new(
             "time".into(),
@@ -523,12 +270,14 @@ mod tests {
             return Ok(());
         }
 
-        let baseline = ParquetReader::new(
+        let baseline_all = ParquetReader::new(
             std::fs::File::open(&fixture)
                 .expect("golden fixture exists (run once with GOLDEN_BLESS=1)"),
         )
         .finish()
         .expect("read golden fixture");
+        let baseline_columns = column_names(&out);
+        let baseline = baseline_all.select(baseline_columns.iter().map(String::as_str))?;
 
         assert_golden_within_tol(&out, &baseline, 1e-8, 1e-8);
         Ok(())
@@ -599,14 +348,14 @@ mod tests {
             output_path.is_none(),
             "test helper only supports memory mode"
         );
-        let registry = alpha_registry()?;
+        let mut by_name = worldquant_alpha_map();
         let alphas = alpha_names
             .into_iter()
             .map(|name| {
-                let descriptor = registry
-                    .get(&name)
-                    .ok_or_else(|| qfactors_core::QFactorsError::UnknownFactor(name.clone()))?;
-                Ok((name, (descriptor.build)()))
+                let expr = by_name
+                    .remove(&name)
+                    .ok_or_else(|| QFactorsError::UnknownFactor(name.clone()))?;
+                Ok((name, expr))
             })
             .collect::<qfactors_core::Result<Vec<_>>>()?;
         let full = memory_frame(compute_alphas(df, options.clone(), alphas, None)?)?;
@@ -641,7 +390,6 @@ mod tests {
         ComputePanelOptions {
             symbol_col: "asset".to_string(),
             time_col: "time".to_string(),
-            column_aliases: HashMap::new(),
         }
     }
 
@@ -862,15 +610,6 @@ mod tests {
             close,
             volume,
         })
-    }
-
-    fn group_fixture() -> qfactors_core::Result<DataFrame> {
-        Ok(df!(
-            "asset" => ["A", "A", "B", "B", "C", "C", "D", "D"],
-            "time" => [1i64, 2, 1, 2, 1, 2, 1, 2],
-            "close" => [10.0, 11.0, 20.0, 22.0, 30.0, 33.0, 40.0, f64::NAN],
-            "industry" => [1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0],
-        )?)
     }
 
     fn open_value(symbol_idx: usize, day: i32) -> f64 {

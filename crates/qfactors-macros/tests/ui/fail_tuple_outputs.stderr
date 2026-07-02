@@ -1,5 +1,0 @@
-error: `outputs` length must match tuple return length
- --> tests/ui/fail_tuple_outputs.rs:4:4
-  |
-4 | fn bad(values: &[f64]) -> (f64, f64) {
-  |    ^^^

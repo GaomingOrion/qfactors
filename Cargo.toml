@@ -2,7 +2,6 @@
 members = [
     "crates/qfactors-core",
     "crates/qfactors-factors",
-    "crates/qfactors-macros",
     "crates/qfactors-py",
 ]
 resolver = "3"
@@ -17,7 +16,6 @@ keywords = ["quant", "factors", "polars", "finance"]
 categories = ["algorithms", "science"]
 
 [workspace.dependencies]
-linkme = "0.3"
 polars = { version = "0.54.4", default-features = false, features = [
     "dtype-date",
     "dtype-datetime",

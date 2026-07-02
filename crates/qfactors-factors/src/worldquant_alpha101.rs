@@ -1,53 +1,50 @@
-use qfactors_core::A;
+use qfactors_core::Expr;
 use qfactors_core::alpha::{
-    abs, adv, cap, close, constant, correlation, covariance, decay_linear, delay, delta, field, ge,
-    high, indneutralize, industry, le, log, low, lt, max, min, open, power, product, rank, returns,
-    scale, sign, signedpower, stddev, sum, ts_argmax, ts_argmin, ts_max, ts_min, ts_rank, volume,
-    vwap, where_,
+    abs, adv, cap, close, col, correlation, covariance, decay_linear, delay, delta, ge,
+    group_neutralize, high, industry, le, lit, log, low, lt, max, min, open, power, product, rank,
+    returns, scale, sign, signed_power, ts_argmax, ts_argmin, ts_max, ts_min, ts_rank, ts_std,
+    ts_sum, volume, vwap, where_,
 };
-use qfactors_macros::alpha;
 
-fn c(value: f64) -> A {
-    constant(value)
+fn c(value: f64) -> Expr {
+    lit(value)
 }
 
-fn scale1(x: A) -> A {
+fn scale1(x: Expr) -> Expr {
     scale(x, 1.0)
 }
 
-fn sector() -> A {
-    field("sector")
+fn sector() -> Expr {
+    col("sector")
 }
 
-fn subindustry() -> A {
-    field("subindustry")
+fn subindustry() -> Expr {
+    col("subindustry")
 }
 
-fn mean(x: A, d: usize) -> A {
-    sum(x, d) / d as f64
+fn mean(x: Expr, d: usize) -> Expr {
+    ts_sum(x, d) / d as f64
 }
 
-fn blend(lhs: A, rhs: A, lhs_weight: f64) -> A {
+fn blend(lhs: Expr, rhs: Expr, lhs_weight: f64) -> Expr {
     lhs * lhs_weight + rhs * (1.0 - lhs_weight)
 }
 
-fn trend_20_10_0() -> A {
+fn trend_20_10_0() -> Expr {
     ((delay(close(), 20) - delay(close(), 10)) / 10.0) - ((delay(close(), 10) - close()) / 10.0)
 }
 
-#[alpha]
-pub fn alpha1() -> A {
+pub fn alpha1() -> Expr {
     rank(ts_argmax(
-        signedpower(
-            where_(lt(returns(), c(0.0)), stddev(returns(), 20), close()),
+        signed_power(
+            where_(lt(returns(), c(0.0)), ts_std(returns(), 20), close()),
             2.0,
         ),
         5,
     )) - 0.5
 }
 
-#[alpha]
-pub fn alpha2() -> A {
+pub fn alpha2() -> Expr {
     -1.0 * correlation(
         rank(delta(log(volume()), 2)),
         rank((close() - open()) / open()),
@@ -55,23 +52,23 @@ pub fn alpha2() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha3() -> A {
+pub fn alpha3() -> Expr {
     -1.0 * correlation(rank(open()), rank(volume()), 10)
 }
 
-#[alpha]
-pub fn alpha4() -> A {
+pub fn alpha4() -> Expr {
     -1.0 * ts_rank(rank(low()), 9)
 }
 
-#[alpha]
-pub fn alpha5() -> A {
+pub fn alpha5() -> Expr {
     rank(open() - mean(vwap(), 10)) * (-1.0 * abs(rank(close() - vwap())))
 }
 
-#[alpha]
-pub fn alpha7() -> A {
+pub fn alpha6() -> Expr {
+    -1.0 * correlation(open(), volume(), 10)
+}
+
+pub fn alpha7() -> Expr {
     where_(
         lt(adv(20), volume()),
         (-1.0 * ts_rank(abs(delta(close(), 7)), 60)) * sign(delta(close(), 7)),
@@ -79,8 +76,12 @@ pub fn alpha7() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha9() -> A {
+pub fn alpha8() -> Expr {
+    let inner = ts_sum(open(), 5) * ts_sum(returns(), 5);
+    -1.0 * rank(inner.clone() - delay(inner, 10))
+}
+
+pub fn alpha9() -> Expr {
     where_(
         lt(c(0.0), ts_min(delta(close(), 1), 5)),
         delta(close(), 1),
@@ -92,8 +93,7 @@ pub fn alpha9() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha10() -> A {
+pub fn alpha10() -> Expr {
     rank(where_(
         lt(c(0.0), ts_min(delta(close(), 1), 4)),
         delta(close(), 1),
@@ -105,57 +105,56 @@ pub fn alpha10() -> A {
     ))
 }
 
-#[alpha]
-pub fn alpha11() -> A {
+pub fn alpha11() -> Expr {
     (rank(ts_max(vwap() - close(), 3)) + rank(ts_min(vwap() - close(), 3)))
         * rank(delta(volume(), 3))
 }
 
-#[alpha]
-pub fn alpha14() -> A {
+pub fn alpha12() -> Expr {
+    sign(delta(volume(), 1)) * (-1.0 * delta(close(), 1))
+}
+
+pub fn alpha13() -> Expr {
+    -1.0 * rank(covariance(rank(close()), rank(volume()), 5))
+}
+
+pub fn alpha14() -> Expr {
     (-1.0 * rank(delta(returns(), 3))) * correlation(open(), volume(), 10)
 }
 
-#[alpha]
-pub fn alpha15() -> A {
-    -1.0 * sum(rank(correlation(rank(high()), rank(volume()), 3)), 3)
+pub fn alpha15() -> Expr {
+    -1.0 * ts_sum(rank(correlation(rank(high()), rank(volume()), 3)), 3)
 }
 
-#[alpha]
-pub fn alpha16() -> A {
+pub fn alpha16() -> Expr {
     -1.0 * rank(covariance(rank(high()), rank(volume()), 5))
 }
 
-#[alpha]
-pub fn alpha17() -> A {
+pub fn alpha17() -> Expr {
     ((-1.0 * rank(ts_rank(close(), 10))) * rank(delta(delta(close(), 1), 1)))
         * rank(ts_rank(volume() / adv(20), 5))
 }
 
-#[alpha]
-pub fn alpha18() -> A {
+pub fn alpha18() -> Expr {
     -1.0 * rank(
-        stddev(abs(close() - open()), 5) + (close() - open()) + correlation(close(), open(), 10),
+        ts_std(abs(close() - open()), 5) + (close() - open()) + correlation(close(), open(), 10),
     )
 }
 
-#[alpha]
-pub fn alpha19() -> A {
+pub fn alpha19() -> Expr {
     (-1.0 * sign((close() - delay(close(), 7)) + delta(close(), 7)))
-        * (rank(sum(returns(), 250) + 1.0) + 1.0)
+        * (rank(ts_sum(returns(), 250) + 1.0) + 1.0)
 }
 
-#[alpha]
-pub fn alpha20() -> A {
+pub fn alpha20() -> Expr {
     ((-1.0 * rank(open() - delay(high(), 1))) * rank(open() - delay(close(), 1)))
         * rank(open() - delay(low(), 1))
 }
 
-#[alpha]
-pub fn alpha21() -> A {
+pub fn alpha21() -> Expr {
     let close_mean8 = mean(close(), 8);
     let close_mean2 = mean(close(), 2);
-    let close_std8 = stddev(close(), 8);
+    let close_std8 = ts_std(close(), 8);
     where_(
         lt(
             close_mean8.clone() + close_std8.clone(),
@@ -170,13 +169,11 @@ pub fn alpha21() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha22() -> A {
-    -1.0 * (delta(correlation(high(), volume(), 5), 5) * rank(stddev(close(), 20)))
+pub fn alpha22() -> Expr {
+    -1.0 * (delta(correlation(high(), volume(), 5), 5) * rank(ts_std(close(), 20)))
 }
 
-#[alpha]
-pub fn alpha23() -> A {
+pub fn alpha23() -> Expr {
     where_(
         lt(mean(high(), 20), high()),
         -1.0 * delta(high(), 2),
@@ -184,8 +181,7 @@ pub fn alpha23() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha24() -> A {
+pub fn alpha24() -> Expr {
     let close_mean100 = mean(close(), 100);
     where_(
         le(delta(close_mean100, 100) / delay(close(), 100), c(0.05)),
@@ -194,18 +190,15 @@ pub fn alpha24() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha25() -> A {
+pub fn alpha25() -> Expr {
     rank(((-1.0 * returns()) * adv(20)) * vwap() * (high() - close()))
 }
 
-#[alpha]
-pub fn alpha26() -> A {
+pub fn alpha26() -> Expr {
     -1.0 * ts_max(correlation(ts_rank(volume(), 5), ts_rank(high(), 5), 5), 3)
 }
 
-#[alpha]
-pub fn alpha27() -> A {
+pub fn alpha27() -> Expr {
     where_(
         lt(
             c(0.5),
@@ -216,30 +209,26 @@ pub fn alpha27() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha28() -> A {
+pub fn alpha28() -> Expr {
     scale1(correlation(adv(20), low(), 5) + ((high() + low()) / 2.0) - close())
 }
 
-#[alpha]
-pub fn alpha29() -> A {
+pub fn alpha29() -> Expr {
     let inner = rank(rank(-1.0 * rank(delta(close() - 1.0, 5))));
     ts_min(
-        product(rank(rank(scale1(log(sum(ts_min(inner, 2), 1))))), 1),
+        product(rank(rank(scale1(log(ts_sum(ts_min(inner, 2), 1))))), 1),
         5,
     ) + ts_rank(delay(-1.0 * returns(), 6), 5)
 }
 
-#[alpha]
-pub fn alpha30() -> A {
+pub fn alpha30() -> Expr {
     let signs = sign(close() - delay(close(), 1))
         + sign(delay(close(), 1) - delay(close(), 2))
         + sign(delay(close(), 2) - delay(close(), 3));
-    ((c(1.0) - rank(signs)) * sum(volume(), 5)) / sum(volume(), 20)
+    ((c(1.0) - rank(signs)) * ts_sum(volume(), 5)) / ts_sum(volume(), 20)
 }
 
-#[alpha]
-pub fn alpha31() -> A {
+pub fn alpha31() -> Expr {
     rank(rank(rank(decay_linear(
         -1.0 * rank(rank(delta(close(), 10))),
         10,
@@ -247,32 +236,27 @@ pub fn alpha31() -> A {
         + sign(scale1(correlation(adv(20), low(), 12)))
 }
 
-#[alpha]
-pub fn alpha32() -> A {
+pub fn alpha32() -> Expr {
     scale1(mean(close(), 7) - close()) + 20.0 * scale1(correlation(vwap(), delay(close(), 5), 230))
 }
 
-#[alpha]
-pub fn alpha33() -> A {
+pub fn alpha33() -> Expr {
     rank(-1.0 * power(c(1.0) - (open() / close()), 1.0))
 }
 
-#[alpha]
-pub fn alpha34() -> A {
+pub fn alpha34() -> Expr {
     rank(
-        (c(1.0) - rank(stddev(returns(), 2) / stddev(returns(), 5)))
+        (c(1.0) - rank(ts_std(returns(), 2) / ts_std(returns(), 5)))
             + (c(1.0) - rank(delta(close(), 1))),
     )
 }
 
-#[alpha]
-pub fn alpha35() -> A {
+pub fn alpha35() -> Expr {
     (ts_rank(volume(), 32) * (c(1.0) - ts_rank((close() + high()) - low(), 16)))
         * (c(1.0) - ts_rank(returns(), 32))
 }
 
-#[alpha]
-pub fn alpha36() -> A {
+pub fn alpha36() -> Expr {
     2.21 * rank(correlation(close() - open(), delay(volume(), 1), 15))
         + 0.7 * rank(open() - close())
         + 0.73 * rank(ts_rank(delay(-1.0 * returns(), 6), 5))
@@ -280,55 +264,45 @@ pub fn alpha36() -> A {
         + 0.6 * rank((mean(close(), 200) - open()) * (close() - open()))
 }
 
-#[alpha]
-pub fn alpha37() -> A {
+pub fn alpha37() -> Expr {
     rank(correlation(delay(open() - close(), 1), close(), 200)) + rank(open() - close())
 }
 
-#[alpha]
-pub fn alpha38() -> A {
+pub fn alpha38() -> Expr {
     (-1.0 * rank(ts_rank(close(), 10))) * rank(close() / open())
 }
 
-#[alpha]
-pub fn alpha39() -> A {
+pub fn alpha39() -> Expr {
     (-1.0 * rank(delta(close(), 7) * (c(1.0) - rank(decay_linear(volume() / adv(20), 9)))))
-        * (c(1.0) + rank(sum(returns(), 250)))
+        * (c(1.0) + rank(ts_sum(returns(), 250)))
 }
 
-#[alpha]
-pub fn alpha40() -> A {
-    (-1.0 * rank(stddev(high(), 10))) * correlation(high(), volume(), 10)
+pub fn alpha40() -> Expr {
+    (-1.0 * rank(ts_std(high(), 10))) * correlation(high(), volume(), 10)
 }
 
-#[alpha]
-pub fn alpha41() -> A {
+pub fn alpha41() -> Expr {
     power(high() * low(), 0.5) - vwap()
 }
 
-#[alpha]
-pub fn alpha42() -> A {
+pub fn alpha42() -> Expr {
     rank(vwap() - close()) / rank(vwap() + close())
 }
 
-#[alpha]
-pub fn alpha43() -> A {
+pub fn alpha43() -> Expr {
     ts_rank(volume() / adv(20), 20) * ts_rank(-1.0 * delta(close(), 7), 8)
 }
 
-#[alpha]
-pub fn alpha44() -> A {
+pub fn alpha44() -> Expr {
     -1.0 * correlation(high(), rank(volume()), 5)
 }
 
-#[alpha]
-pub fn alpha45() -> A {
+pub fn alpha45() -> Expr {
     -1.0 * ((rank(mean(delay(close(), 5), 20)) * correlation(close(), volume(), 2))
-        * rank(correlation(sum(close(), 5), sum(close(), 20), 2)))
+        * rank(correlation(ts_sum(close(), 5), ts_sum(close(), 20), 2)))
 }
 
-#[alpha]
-pub fn alpha46() -> A {
+pub fn alpha46() -> Expr {
     where_(
         lt(c(0.25), trend_20_10_0()),
         c(-1.0),
@@ -340,24 +314,21 @@ pub fn alpha46() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha47() -> A {
+pub fn alpha47() -> Expr {
     (((rank(c(1.0) / close()) * volume()) / adv(20))
         * ((high() * rank(high() - close())) / mean(high(), 5)))
         - rank(vwap() - delay(vwap(), 5))
 }
 
-#[alpha]
-pub fn alpha48() -> A {
-    indneutralize(
+pub fn alpha48() -> Expr {
+    group_neutralize(
         (correlation(delta(close(), 1), delta(delay(close(), 1), 1), 250) * delta(close(), 1))
             / close(),
         subindustry(),
-    ) / sum(power(delta(close(), 1) / delay(close(), 1), 2.0), 250)
+    ) / ts_sum(power(delta(close(), 1) / delay(close(), 1), 2.0), 250)
 }
 
-#[alpha]
-pub fn alpha49() -> A {
+pub fn alpha49() -> Expr {
     where_(
         lt(trend_20_10_0(), c(-0.1)),
         c(1.0),
@@ -365,13 +336,11 @@ pub fn alpha49() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha50() -> A {
+pub fn alpha50() -> Expr {
     -1.0 * ts_max(rank(correlation(rank(volume()), rank(vwap()), 5)), 5)
 }
 
-#[alpha]
-pub fn alpha51() -> A {
+pub fn alpha51() -> Expr {
     where_(
         lt(trend_20_10_0(), c(-0.05)),
         c(1.0),
@@ -379,28 +348,24 @@ pub fn alpha51() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha52() -> A {
+pub fn alpha52() -> Expr {
     ((-1.0 * ts_min(low(), 5) + delay(ts_min(low(), 5), 5))
-        * rank((sum(returns(), 240) - sum(returns(), 20)) / 220.0))
+        * rank((ts_sum(returns(), 240) - ts_sum(returns(), 20)) / 220.0))
         * ts_rank(volume(), 5)
 }
 
-#[alpha]
-pub fn alpha53() -> A {
+pub fn alpha53() -> Expr {
     -1.0 * delta(
         ((close() - low()) - (high() - close())) / (close() - low()),
         9,
     )
 }
 
-#[alpha]
-pub fn alpha54() -> A {
+pub fn alpha54() -> Expr {
     (-1.0 * ((low() - close()) * power(open(), 5.0))) / ((low() - high()) * power(close(), 5.0))
 }
 
-#[alpha]
-pub fn alpha55() -> A {
+pub fn alpha55() -> Expr {
     -1.0 * correlation(
         rank((close() - ts_min(low(), 12)) / (ts_max(high(), 12) - ts_min(low(), 12))),
         rank(volume()),
@@ -408,37 +373,35 @@ pub fn alpha55() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha56() -> A {
-    -1.0 * (rank(sum(returns(), 10) / sum(sum(returns(), 2), 3)) * rank(returns() * cap()))
+pub fn alpha56() -> Expr {
+    -1.0 * (rank(ts_sum(returns(), 10) / ts_sum(ts_sum(returns(), 2), 3)) * rank(returns() * cap()))
 }
 
-#[alpha]
-pub fn alpha57() -> A {
+pub fn alpha57() -> Expr {
     -1.0 * ((close() - vwap()) / decay_linear(rank(ts_argmax(close(), 30)), 2))
 }
 
-#[alpha]
-pub fn alpha58() -> A {
+pub fn alpha58() -> Expr {
     -1.0 * ts_rank(
-        decay_linear(correlation(indneutralize(vwap(), sector()), volume(), 3), 7),
+        decay_linear(
+            correlation(group_neutralize(vwap(), sector()), volume(), 3),
+            7,
+        ),
         5,
     )
 }
 
-#[alpha]
-pub fn alpha59() -> A {
+pub fn alpha59() -> Expr {
     -1.0 * ts_rank(
         decay_linear(
-            correlation(indneutralize(vwap(), industry()), volume(), 4),
+            correlation(group_neutralize(vwap(), industry()), volume(), 4),
             16,
         ),
         8,
     )
 }
 
-#[alpha]
-pub fn alpha60() -> A {
+pub fn alpha60() -> Expr {
     -1.0 * (2.0
         * scale1(rank(
             (((close() - low()) - (high() - close())) / (high() - low())) * volume(),
@@ -446,18 +409,16 @@ pub fn alpha60() -> A {
         - scale1(rank(ts_argmax(close(), 10))))
 }
 
-#[alpha]
-pub fn alpha61() -> A {
+pub fn alpha61() -> Expr {
     lt(
         rank(vwap() - ts_min(vwap(), 16)),
         rank(correlation(vwap(), adv(180), 17)),
     )
 }
 
-#[alpha]
-pub fn alpha62() -> A {
+pub fn alpha62() -> Expr {
     -1.0 * lt(
-        rank(correlation(vwap(), sum(adv(20), 22), 9)),
+        rank(correlation(vwap(), ts_sum(adv(20), 22), 9)),
         rank(lt(
             rank(open()) + rank(open()),
             rank((high() + low()) / 2.0) + rank(high()),
@@ -465,43 +426,39 @@ pub fn alpha62() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha63() -> A {
+pub fn alpha63() -> Expr {
     (rank(decay_linear(
-        delta(indneutralize(close(), industry()), 2),
+        delta(group_neutralize(close(), industry()), 2),
         8,
     )) - rank(decay_linear(
-        correlation(blend(vwap(), open(), 0.318108), sum(adv(180), 37), 13),
+        correlation(blend(vwap(), open(), 0.318108), ts_sum(adv(180), 37), 13),
         12,
     ))) * -1.0
 }
 
-#[alpha]
-pub fn alpha64() -> A {
+pub fn alpha64() -> Expr {
     -1.0 * lt(
         rank(correlation(
-            sum(blend(open(), low(), 0.178404), 12),
-            sum(adv(120), 12),
+            ts_sum(blend(open(), low(), 0.178404), 12),
+            ts_sum(adv(120), 12),
             16,
         )),
         rank(delta(blend((high() + low()) / 2.0, vwap(), 0.178404), 3)),
     )
 }
 
-#[alpha]
-pub fn alpha65() -> A {
+pub fn alpha65() -> Expr {
     -1.0 * lt(
         rank(correlation(
             blend(open(), vwap(), 0.00817205),
-            sum(adv(60), 8),
+            ts_sum(adv(60), 8),
             6,
         )),
         rank(open() - ts_min(open(), 13)),
     )
 }
 
-#[alpha]
-pub fn alpha66() -> A {
+pub fn alpha66() -> Expr {
     (rank(decay_linear(delta(vwap(), 3), 7))
         + ts_rank(
             decay_linear((low() - vwap()) / (open() - ((high() + low()) / 2.0)), 11),
@@ -510,47 +467,42 @@ pub fn alpha66() -> A {
         * -1.0
 }
 
-#[alpha]
-pub fn alpha67() -> A {
+pub fn alpha67() -> Expr {
     power(
         rank(high() - ts_min(high(), 2)),
         rank(correlation(
-            indneutralize(vwap(), sector()),
-            indneutralize(adv(20), subindustry()),
+            group_neutralize(vwap(), sector()),
+            group_neutralize(adv(20), subindustry()),
             6,
         )),
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha68() -> A {
+pub fn alpha68() -> Expr {
     -1.0 * lt(
         ts_rank(correlation(rank(high()), rank(adv(15)), 8), 13),
         rank(delta(blend(close(), low(), 0.518371), 1)),
     )
 }
 
-#[alpha]
-pub fn alpha69() -> A {
+pub fn alpha69() -> Expr {
     power(
-        rank(ts_max(delta(indneutralize(vwap(), industry()), 2), 4)),
+        rank(ts_max(delta(group_neutralize(vwap(), industry()), 2), 4)),
         ts_rank(correlation(blend(close(), vwap(), 0.490655), adv(20), 4), 9),
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha70() -> A {
+pub fn alpha70() -> Expr {
     power(
         rank(delta(vwap(), 1)),
         ts_rank(
-            correlation(indneutralize(close(), industry()), adv(50), 17),
+            correlation(group_neutralize(close(), industry()), adv(50), 17),
             17,
         ),
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha71() -> A {
+pub fn alpha71() -> Expr {
     max(
         ts_rank(
             decay_linear(
@@ -566,8 +518,7 @@ pub fn alpha71() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha72() -> A {
+pub fn alpha72() -> Expr {
     rank(decay_linear(
         correlation((high() + low()) / 2.0, adv(40), 8),
         10,
@@ -577,8 +528,7 @@ pub fn alpha72() -> A {
     ))
 }
 
-#[alpha]
-pub fn alpha73() -> A {
+pub fn alpha73() -> Expr {
     max(
         rank(decay_linear(delta(vwap(), 4), 2)),
         ts_rank(
@@ -591,10 +541,9 @@ pub fn alpha73() -> A {
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha74() -> A {
+pub fn alpha74() -> Expr {
     -1.0 * lt(
-        rank(correlation(close(), sum(adv(30), 37), 15)),
+        rank(correlation(close(), ts_sum(adv(30), 37), 15)),
         rank(correlation(
             rank(blend(high(), vwap(), 0.0261661)),
             rank(volume()),
@@ -603,21 +552,22 @@ pub fn alpha74() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha75() -> A {
+pub fn alpha75() -> Expr {
     lt(
         rank(correlation(vwap(), volume(), 4)),
         rank(correlation(rank(low()), rank(adv(50)), 12)),
     )
 }
 
-#[alpha]
-pub fn alpha76() -> A {
+pub fn alpha76() -> Expr {
     max(
         rank(decay_linear(delta(vwap(), 1), 11)),
         ts_rank(
             decay_linear(
-                ts_rank(correlation(indneutralize(low(), sector()), adv(81), 8), 19),
+                ts_rank(
+                    correlation(group_neutralize(low(), sector()), adv(81), 8),
+                    19,
+                ),
                 17,
             ),
             19,
@@ -625,8 +575,7 @@ pub fn alpha76() -> A {
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha77() -> A {
+pub fn alpha77() -> Expr {
     min(
         rank(decay_linear(
             ((high() + low()) / 2.0 + high()) - (vwap() + high()),
@@ -639,58 +588,56 @@ pub fn alpha77() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha78() -> A {
+pub fn alpha78() -> Expr {
     power(
         rank(correlation(
-            sum(blend(low(), vwap(), 0.352233), 19),
-            sum(adv(40), 19),
+            ts_sum(blend(low(), vwap(), 0.352233), 19),
+            ts_sum(adv(40), 19),
             6,
         )),
         rank(correlation(rank(vwap()), rank(volume()), 5)),
     )
 }
 
-#[alpha]
-pub fn alpha79() -> A {
+pub fn alpha79() -> Expr {
     lt(
         rank(delta(
-            indneutralize(blend(close(), open(), 0.60733), sector()),
+            group_neutralize(blend(close(), open(), 0.60733), sector()),
             1,
         )),
         rank(correlation(ts_rank(vwap(), 3), ts_rank(adv(150), 9), 14)),
     )
 }
 
-#[alpha]
-pub fn alpha80() -> A {
+pub fn alpha80() -> Expr {
     power(
         rank(sign(delta(
-            indneutralize(blend(open(), high(), 0.868128), industry()),
+            group_neutralize(blend(open(), high(), 0.868128), industry()),
             4,
         ))),
         ts_rank(correlation(high(), adv(10), 5), 5),
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha81() -> A {
+pub fn alpha81() -> Expr {
     -1.0 * lt(
         rank(log(product(
-            rank(power(rank(correlation(vwap(), sum(adv(10), 49), 8)), 4.0)),
+            rank(power(
+                rank(correlation(vwap(), ts_sum(adv(10), 49), 8)),
+                4.0,
+            )),
             14,
         ))),
         rank(correlation(rank(vwap()), rank(volume()), 5)),
     )
 }
 
-#[alpha]
-pub fn alpha82() -> A {
+pub fn alpha82() -> Expr {
     min(
         rank(decay_linear(delta(open(), 1), 14)),
         ts_rank(
             decay_linear(
-                correlation(indneutralize(volume(), sector()), open(), 17),
+                correlation(group_neutralize(volume(), sector()), open(), 17),
                 6,
             ),
             13,
@@ -698,19 +645,16 @@ pub fn alpha82() -> A {
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha83() -> A {
+pub fn alpha83() -> Expr {
     (rank(delay((high() - low()) / mean(close(), 5), 2)) * rank(rank(volume())))
         / (((high() - low()) / mean(close(), 5)) / (vwap() - close()))
 }
 
-#[alpha]
-pub fn alpha84() -> A {
-    signedpower(ts_rank(vwap() - ts_max(vwap(), 15), 20), delta(close(), 4))
+pub fn alpha84() -> Expr {
+    signed_power(ts_rank(vwap() - ts_max(vwap(), 15), 20), delta(close(), 4))
 }
 
-#[alpha]
-pub fn alpha85() -> A {
+pub fn alpha85() -> Expr {
     power(
         rank(correlation(blend(high(), close(), 0.876703), adv(30), 9)),
         rank(correlation(
@@ -721,21 +665,23 @@ pub fn alpha85() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha86() -> A {
+pub fn alpha86() -> Expr {
     -1.0 * lt(
-        ts_rank(correlation(close(), sum(adv(20), 14), 6), 20),
+        ts_rank(correlation(close(), ts_sum(adv(20), 14), 6), 20),
         rank((open() + close()) - (vwap() + open())),
     )
 }
 
-#[alpha]
-pub fn alpha87() -> A {
+pub fn alpha87() -> Expr {
     max(
         rank(decay_linear(delta(blend(close(), vwap(), 0.369701), 1), 2)),
         ts_rank(
             decay_linear(
-                abs(correlation(indneutralize(adv(81), industry()), close(), 13)),
+                abs(correlation(
+                    group_neutralize(adv(81), industry()),
+                    close(),
+                    13,
+                )),
                 4,
             ),
             14,
@@ -743,8 +689,7 @@ pub fn alpha87() -> A {
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha88() -> A {
+pub fn alpha88() -> Expr {
     min(
         rank(decay_linear(
             (rank(open()) + rank(low())) - (rank(high()) + rank(close())),
@@ -757,32 +702,29 @@ pub fn alpha88() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha89() -> A {
+pub fn alpha89() -> Expr {
     ts_rank(decay_linear(correlation(low(), adv(10), 6), 5), 3)
         - ts_rank(
-            decay_linear(delta(indneutralize(vwap(), industry()), 3), 10),
+            decay_linear(delta(group_neutralize(vwap(), industry()), 3), 10),
             15,
         )
 }
 
-#[alpha]
-pub fn alpha90() -> A {
+pub fn alpha90() -> Expr {
     power(
         rank(close() - ts_max(close(), 4)),
         ts_rank(
-            correlation(indneutralize(adv(40), subindustry()), low(), 5),
+            correlation(group_neutralize(adv(40), subindustry()), low(), 5),
             3,
         ),
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha91() -> A {
+pub fn alpha91() -> Expr {
     (ts_rank(
         decay_linear(
             decay_linear(
-                correlation(indneutralize(close(), industry()), volume(), 9),
+                correlation(group_neutralize(close(), industry()), volume(), 9),
                 16,
             ),
             3,
@@ -792,8 +734,7 @@ pub fn alpha91() -> A {
         * -1.0
 }
 
-#[alpha]
-pub fn alpha92() -> A {
+pub fn alpha92() -> Expr {
     min(
         ts_rank(
             decay_linear(lt((high() + low()) / 2.0 + close(), low() + open()), 14),
@@ -806,34 +747,31 @@ pub fn alpha92() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha93() -> A {
+pub fn alpha93() -> Expr {
     ts_rank(
         decay_linear(
-            correlation(indneutralize(vwap(), industry()), adv(81), 17),
+            correlation(group_neutralize(vwap(), industry()), adv(81), 17),
             19,
         ),
         7,
     ) / rank(decay_linear(delta(blend(close(), vwap(), 0.524434), 2), 16))
 }
 
-#[alpha]
-pub fn alpha94() -> A {
+pub fn alpha94() -> Expr {
     power(
         rank(vwap() - ts_min(vwap(), 11)),
         ts_rank(correlation(ts_rank(vwap(), 19), ts_rank(adv(60), 4), 18), 2),
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha95() -> A {
+pub fn alpha95() -> Expr {
     lt(
         rank(open() - ts_min(open(), 12)),
         ts_rank(
             power(
                 rank(correlation(
-                    sum((high() + low()) / 2.0, 19),
-                    sum(adv(40), 19),
+                    ts_sum((high() + low()) / 2.0, 19),
+                    ts_sum(adv(40), 19),
                     12,
                 )),
                 5.0,
@@ -843,8 +781,7 @@ pub fn alpha95() -> A {
     )
 }
 
-#[alpha]
-pub fn alpha96() -> A {
+pub fn alpha96() -> Expr {
     max(
         ts_rank(
             decay_linear(correlation(rank(vwap()), rank(volume()), 3), 4),
@@ -860,10 +797,12 @@ pub fn alpha96() -> A {
     ) * -1.0
 }
 
-#[alpha]
-pub fn alpha97() -> A {
+pub fn alpha97() -> Expr {
     (rank(decay_linear(
-        delta(indneutralize(blend(low(), vwap(), 0.721001), industry()), 3),
+        delta(
+            group_neutralize(blend(low(), vwap(), 0.721001), industry()),
+            3,
+        ),
         20,
     )) - ts_rank(
         decay_linear(
@@ -874,9 +813,8 @@ pub fn alpha97() -> A {
     )) * -1.0
 }
 
-#[alpha]
-pub fn alpha98() -> A {
-    rank(decay_linear(correlation(vwap(), sum(adv(5), 26), 4), 7))
+pub fn alpha98() -> Expr {
+    rank(decay_linear(correlation(vwap(), ts_sum(adv(5), 26), 4), 7))
         - rank(decay_linear(
             ts_rank(
                 ts_argmin(correlation(rank(open()), rank(adv(15)), 20), 8),
@@ -886,29 +824,142 @@ pub fn alpha98() -> A {
         ))
 }
 
-#[alpha]
-pub fn alpha99() -> A {
+pub fn alpha99() -> Expr {
     -1.0 * lt(
         rank(correlation(
-            sum((high() + low()) / 2.0, 19),
-            sum(adv(60), 19),
+            ts_sum((high() + low()) / 2.0, 19),
+            ts_sum(adv(60), 19),
             8,
         )),
         rank(correlation(low(), volume(), 6)),
     )
 }
 
-#[alpha]
-pub fn alpha100() -> A {
+pub fn alpha100() -> Expr {
     let position = (((close() - low()) - (high() - close())) / (high() - low())) * volume();
     -1.0 * (((1.5
-        * scale1(indneutralize(
-            indneutralize(rank(position), subindustry()),
+        * scale1(group_neutralize(
+            group_neutralize(rank(position), subindustry()),
             subindustry(),
         )))
-        - scale1(indneutralize(
+        - scale1(group_neutralize(
             correlation(close(), rank(adv(20)), 5) - rank(ts_argmin(close(), 30)),
             subindustry(),
         )))
         * (volume() / adv(20)))
+}
+
+pub fn alpha101() -> Expr {
+    (close() - open()) / (high() - low() + 0.001)
+}
+
+pub fn worldquant_alpha101() -> Vec<(String, Expr)> {
+    let alphas: [(&str, fn() -> Expr); 101] = [
+        ("alpha1", alpha1 as fn() -> Expr),
+        ("alpha2", alpha2 as fn() -> Expr),
+        ("alpha3", alpha3 as fn() -> Expr),
+        ("alpha4", alpha4 as fn() -> Expr),
+        ("alpha5", alpha5 as fn() -> Expr),
+        ("alpha6", alpha6 as fn() -> Expr),
+        ("alpha7", alpha7 as fn() -> Expr),
+        ("alpha8", alpha8 as fn() -> Expr),
+        ("alpha9", alpha9 as fn() -> Expr),
+        ("alpha10", alpha10 as fn() -> Expr),
+        ("alpha11", alpha11 as fn() -> Expr),
+        ("alpha12", alpha12 as fn() -> Expr),
+        ("alpha13", alpha13 as fn() -> Expr),
+        ("alpha14", alpha14 as fn() -> Expr),
+        ("alpha15", alpha15 as fn() -> Expr),
+        ("alpha16", alpha16 as fn() -> Expr),
+        ("alpha17", alpha17 as fn() -> Expr),
+        ("alpha18", alpha18 as fn() -> Expr),
+        ("alpha19", alpha19 as fn() -> Expr),
+        ("alpha20", alpha20 as fn() -> Expr),
+        ("alpha21", alpha21 as fn() -> Expr),
+        ("alpha22", alpha22 as fn() -> Expr),
+        ("alpha23", alpha23 as fn() -> Expr),
+        ("alpha24", alpha24 as fn() -> Expr),
+        ("alpha25", alpha25 as fn() -> Expr),
+        ("alpha26", alpha26 as fn() -> Expr),
+        ("alpha27", alpha27 as fn() -> Expr),
+        ("alpha28", alpha28 as fn() -> Expr),
+        ("alpha29", alpha29 as fn() -> Expr),
+        ("alpha30", alpha30 as fn() -> Expr),
+        ("alpha31", alpha31 as fn() -> Expr),
+        ("alpha32", alpha32 as fn() -> Expr),
+        ("alpha33", alpha33 as fn() -> Expr),
+        ("alpha34", alpha34 as fn() -> Expr),
+        ("alpha35", alpha35 as fn() -> Expr),
+        ("alpha36", alpha36 as fn() -> Expr),
+        ("alpha37", alpha37 as fn() -> Expr),
+        ("alpha38", alpha38 as fn() -> Expr),
+        ("alpha39", alpha39 as fn() -> Expr),
+        ("alpha40", alpha40 as fn() -> Expr),
+        ("alpha41", alpha41 as fn() -> Expr),
+        ("alpha42", alpha42 as fn() -> Expr),
+        ("alpha43", alpha43 as fn() -> Expr),
+        ("alpha44", alpha44 as fn() -> Expr),
+        ("alpha45", alpha45 as fn() -> Expr),
+        ("alpha46", alpha46 as fn() -> Expr),
+        ("alpha47", alpha47 as fn() -> Expr),
+        ("alpha48", alpha48 as fn() -> Expr),
+        ("alpha49", alpha49 as fn() -> Expr),
+        ("alpha50", alpha50 as fn() -> Expr),
+        ("alpha51", alpha51 as fn() -> Expr),
+        ("alpha52", alpha52 as fn() -> Expr),
+        ("alpha53", alpha53 as fn() -> Expr),
+        ("alpha54", alpha54 as fn() -> Expr),
+        ("alpha55", alpha55 as fn() -> Expr),
+        ("alpha56", alpha56 as fn() -> Expr),
+        ("alpha57", alpha57 as fn() -> Expr),
+        ("alpha58", alpha58 as fn() -> Expr),
+        ("alpha59", alpha59 as fn() -> Expr),
+        ("alpha60", alpha60 as fn() -> Expr),
+        ("alpha61", alpha61 as fn() -> Expr),
+        ("alpha62", alpha62 as fn() -> Expr),
+        ("alpha63", alpha63 as fn() -> Expr),
+        ("alpha64", alpha64 as fn() -> Expr),
+        ("alpha65", alpha65 as fn() -> Expr),
+        ("alpha66", alpha66 as fn() -> Expr),
+        ("alpha67", alpha67 as fn() -> Expr),
+        ("alpha68", alpha68 as fn() -> Expr),
+        ("alpha69", alpha69 as fn() -> Expr),
+        ("alpha70", alpha70 as fn() -> Expr),
+        ("alpha71", alpha71 as fn() -> Expr),
+        ("alpha72", alpha72 as fn() -> Expr),
+        ("alpha73", alpha73 as fn() -> Expr),
+        ("alpha74", alpha74 as fn() -> Expr),
+        ("alpha75", alpha75 as fn() -> Expr),
+        ("alpha76", alpha76 as fn() -> Expr),
+        ("alpha77", alpha77 as fn() -> Expr),
+        ("alpha78", alpha78 as fn() -> Expr),
+        ("alpha79", alpha79 as fn() -> Expr),
+        ("alpha80", alpha80 as fn() -> Expr),
+        ("alpha81", alpha81 as fn() -> Expr),
+        ("alpha82", alpha82 as fn() -> Expr),
+        ("alpha83", alpha83 as fn() -> Expr),
+        ("alpha84", alpha84 as fn() -> Expr),
+        ("alpha85", alpha85 as fn() -> Expr),
+        ("alpha86", alpha86 as fn() -> Expr),
+        ("alpha87", alpha87 as fn() -> Expr),
+        ("alpha88", alpha88 as fn() -> Expr),
+        ("alpha89", alpha89 as fn() -> Expr),
+        ("alpha90", alpha90 as fn() -> Expr),
+        ("alpha91", alpha91 as fn() -> Expr),
+        ("alpha92", alpha92 as fn() -> Expr),
+        ("alpha93", alpha93 as fn() -> Expr),
+        ("alpha94", alpha94 as fn() -> Expr),
+        ("alpha95", alpha95 as fn() -> Expr),
+        ("alpha96", alpha96 as fn() -> Expr),
+        ("alpha97", alpha97 as fn() -> Expr),
+        ("alpha98", alpha98 as fn() -> Expr),
+        ("alpha99", alpha99 as fn() -> Expr),
+        ("alpha100", alpha100 as fn() -> Expr),
+        ("alpha101", alpha101 as fn() -> Expr),
+    ];
+
+    alphas
+        .into_iter()
+        .map(|(name, build)| (name.to_string(), build()))
+        .collect()
 }

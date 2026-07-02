@@ -4,13 +4,16 @@ use std::sync::Arc;
 
 use polars::prelude::*;
 
-use crate::column_store::ensure_dtype;
-use crate::compute_panel::{ComputePanelOptions, sort_panel, validate_structural_column};
 use crate::error::{QFactorsError, Result};
-use crate::factor::DType;
 
 const NT_INDEX: &str = "__qfactors_nt_index";
 const ORIG_INDEX: &str = "__qfactors_orig_index";
+
+#[derive(Debug, Clone)]
+pub struct ComputePanelOptions {
+    pub symbol_col: String,
+    pub time_col: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct CellSet {
@@ -87,37 +90,27 @@ pub fn build_cellset(
 
 fn validate_fields(
     df: &DataFrame,
-    options: &ComputePanelOptions,
+    _options: &ComputePanelOptions,
     fields: &BTreeSet<String>,
 ) -> Result<()> {
-    for logical_name in fields {
-        let column_name = options
-            .column_aliases
-            .get(logical_name)
-            .cloned()
-            .unwrap_or_else(|| logical_name.clone());
+    for column_name in fields {
         let column = df
-            .column(&column_name)
+            .column(column_name)
             .map_err(|_| QFactorsError::MissingColumn(column_name.clone()))?;
-        ensure_dtype(column, DType::F64)?;
+        ensure_f64(column)?;
     }
     Ok(())
 }
 
 fn build_fields(
     df: &DataFrame,
-    options: &ComputePanelOptions,
+    _options: &ComputePanelOptions,
     fields: &BTreeSet<String>,
 ) -> Result<HashMap<String, Arc<Vec<f64>>>> {
     let mut out = HashMap::with_capacity(fields.len());
-    for logical_name in fields {
-        let column_name = options
-            .column_aliases
-            .get(logical_name)
-            .cloned()
-            .unwrap_or_else(|| logical_name.clone());
+    for column_name in fields {
         let column = df
-            .column(&column_name)
+            .column(column_name)
             .map_err(|_| QFactorsError::MissingColumn(column_name.clone()))?;
         let values = column
             .try_f64()
@@ -125,9 +118,63 @@ fn build_fields(
             .iter()
             .map(|value| value.unwrap_or(f64::NAN))
             .collect::<Vec<_>>();
-        out.insert(logical_name.clone(), Arc::new(values));
+        out.insert(column_name.clone(), Arc::new(values));
     }
     Ok(out)
+}
+
+fn ensure_f64(column: &Column) -> Result<()> {
+    if column.dtype() == &DataType::Float64 {
+        Ok(())
+    } else {
+        Err(QFactorsError::DTypeMismatch {
+            column: column.name().to_string(),
+            expected: "f64",
+            actual: column.dtype().to_string(),
+        })
+    }
+}
+
+pub(crate) fn validate_structural_column(column: &Column, is_symbol: bool) -> Result<()> {
+    if column.null_count() > 0 {
+        if is_symbol {
+            return Err(QFactorsError::SymbolNull(column.name().to_string()));
+        }
+        return Err(QFactorsError::TimeNull(column.name().to_string()));
+    }
+
+    reject_nan_values(column)
+}
+
+fn reject_nan_values(column: &Column) -> Result<()> {
+    if !matches!(column.dtype(), DataType::Float32 | DataType::Float64) {
+        return Ok(());
+    }
+
+    for row in 0..column.len() {
+        if is_nan_value(&column.get(row)?) {
+            return Err(QFactorsError::NaNNotAllowed {
+                column: column.name().to_string(),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn is_nan_value(value: &AnyValue<'_>) -> bool {
+    match value {
+        AnyValue::Float32(value) => value.is_nan(),
+        AnyValue::Float64(value) => value.is_nan(),
+        _ => false,
+    }
+}
+
+pub(crate) fn sort_panel(df: &DataFrame, options: &ComputePanelOptions) -> Result<DataFrame> {
+    Ok(df.sort(
+        [&options.symbol_col, &options.time_col],
+        SortMultipleOptions::default(),
+    )?)
 }
 
 fn sym_blocks(sorted: &DataFrame, options: &ComputePanelOptions) -> Result<Vec<Range<usize>>> {
@@ -189,7 +236,6 @@ mod tests {
         ComputePanelOptions {
             symbol_col: "asset".to_string(),
             time_col: "time".to_string(),
-            column_aliases: HashMap::new(),
         }
     }
 
@@ -239,19 +285,15 @@ mod tests {
     }
 
     #[test]
-    fn build_cellset_uses_aliases_and_float_nulls_become_nan() -> Result<()> {
-        let mut options = options();
-        options
-            .column_aliases
-            .insert("open".to_string(), "raw_open".to_string());
+    fn build_cellset_float_nulls_become_nan() -> Result<()> {
         let df = df!(
             "asset" => ["A", "A"],
             "time" => [1i64, 2],
-            "raw_open" => [Some(10.0), None],
+            "open" => [Some(10.0), None],
         )?;
         let fields = BTreeSet::from(["open".to_string()]);
 
-        let cs = build_cellset(&df, &options, &fields)?;
+        let cs = build_cellset(&df, &options(), &fields)?;
 
         assert_eq!(cs.fields["open"][0], 10.0);
         assert!(cs.fields["open"][1].is_nan());

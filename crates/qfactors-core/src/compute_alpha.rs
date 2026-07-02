@@ -6,8 +6,7 @@ use rayon::prelude::*;
 
 use crate::alpha_dag::eval_exprs as eval_exprs_dag;
 use crate::alpha_eval::{eval, to_cells};
-use crate::cellset::{CellSet, build_cellset};
-use crate::compute_panel::ComputePanelOptions;
+use crate::cellset::{CellSet, ComputePanelOptions, build_cellset};
 use crate::compute_sink::{ComputeResult, ComputeSink};
 use crate::error::{QFactorsError, Result};
 use crate::expr::{Expr, collect_fields};
@@ -164,15 +163,12 @@ fn build_full_frame(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
     use super::*;
 
     fn options() -> ComputePanelOptions {
         ComputePanelOptions {
             symbol_col: "asset".to_string(),
             time_col: "time".to_string(),
-            column_aliases: HashMap::new(),
         }
     }
 

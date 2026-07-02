@@ -1,5 +1,0 @@
-error: factor return type must be `f64`, `(f64, ...)`, or `Result<T>`
- --> tests/ui/fail_return_type.rs:4:27
-  |
-4 | fn bad(values: &[f64]) -> u32 {
-  |                           ^^^

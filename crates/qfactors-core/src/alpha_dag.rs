@@ -6,8 +6,9 @@ use rayon::prelude::*;
 
 use crate::alpha_eval::{
     cmp_value, correlation, covariance, decay_linear, delay, delta, group_neutralize, group_rank,
-    log_value, max_value, min_value, product, rank, scale, sign, signed_power, ts_argmax,
-    ts_argmin, ts_max, ts_mean, ts_min, ts_rank, ts_rank_raw, ts_std, ts_sum, where_value,
+    log_value, max_value, min_value, product, quantile, rank, resi, rsquare, scale, sign,
+    signed_power, slope, ts_argmax, ts_argmin, ts_max, ts_mean, ts_min, ts_rank, ts_rank_raw,
+    ts_std, ts_sum, where_value,
 };
 use crate::cellset::CellSet;
 use crate::error::{QFactorsError, Result};
@@ -56,6 +57,10 @@ enum Node {
     TsRank(NodeId, usize),
     TsRankRaw(NodeId, usize),
     TsStd(NodeId, usize),
+    Slope(NodeId, usize),
+    Rsquare(NodeId, usize),
+    Resi(NodeId, usize),
+    Quantile(NodeId, usize, u64),
     DecayLinear(NodeId, usize),
     Correlation(NodeId, NodeId, usize),
     Covariance(NodeId, NodeId, usize),
@@ -122,6 +127,10 @@ impl Node {
             | Node::TsRank(inner, _)
             | Node::TsRankRaw(inner, _)
             | Node::TsStd(inner, _)
+            | Node::Slope(inner, _)
+            | Node::Rsquare(inner, _)
+            | Node::Resi(inner, _)
+            | Node::Quantile(inner, _, _)
             | Node::DecayLinear(inner, _)
             | Node::Rank(inner)
             | Node::Scale(inner, _)
@@ -181,6 +190,10 @@ impl Node {
             Node::TsRank(inner, days) => Node::TsRank(map(*inner), *days),
             Node::TsRankRaw(inner, days) => Node::TsRankRaw(map(*inner), *days),
             Node::TsStd(inner, days) => Node::TsStd(map(*inner), *days),
+            Node::Slope(inner, days) => Node::Slope(map(*inner), *days),
+            Node::Rsquare(inner, days) => Node::Rsquare(map(*inner), *days),
+            Node::Resi(inner, days) => Node::Resi(map(*inner), *days),
+            Node::Quantile(inner, days, q) => Node::Quantile(map(*inner), *days, *q),
             Node::DecayLinear(inner, days) => Node::DecayLinear(map(*inner), *days),
             Node::Correlation(lhs, rhs, days) => Node::Correlation(map(*lhs), map(*rhs), *days),
             Node::Covariance(lhs, rhs, days) => Node::Covariance(map(*lhs), map(*rhs), *days),
@@ -259,6 +272,16 @@ impl Dag {
             Expr::TsRank(inner, days) => self.lower_ts_unary(inner, *days, Node::TsRank),
             Expr::TsRankRaw(inner, days) => self.lower_ts_unary(inner, *days, Node::TsRankRaw),
             Expr::TsStd(inner, days) => self.lower_ts_unary(inner, *days, Node::TsStd),
+            Expr::Slope(inner, days) => self.lower_ts_unary(inner, *days, Node::Slope),
+            Expr::Rsquare(inner, days) => self.lower_ts_unary(inner, *days, Node::Rsquare),
+            Expr::Resi(inner, days) => self.lower_ts_unary(inner, *days, Node::Resi),
+            Expr::Quantile(inner, days, q) => {
+                let inner = self.lower_to(inner, Layout::Nt);
+                self.intern(
+                    Node::Quantile(inner, *days, q.to_bits()),
+                    ValueLayout::Cells(Layout::Nt),
+                )
+            }
             Expr::DecayLinear(inner, days) => self.lower_ts_unary(inner, *days, Node::DecayLinear),
             Expr::Correlation(lhs, rhs, days) => {
                 let lhs = self.lower_to(lhs, Layout::Nt);
@@ -883,6 +906,34 @@ impl Dag {
                 cs,
                 |values, cs| ts_std(values, days, cs),
             ),
+            Node::Slope(inner, days) => eval_cells_unary(
+                slot_value(slots, inner),
+                Layout::Nt,
+                Layout::Nt,
+                cs,
+                |values, cs| slope(values, days, cs),
+            ),
+            Node::Rsquare(inner, days) => eval_cells_unary(
+                slot_value(slots, inner),
+                Layout::Nt,
+                Layout::Nt,
+                cs,
+                |values, cs| rsquare(values, days, cs),
+            ),
+            Node::Resi(inner, days) => eval_cells_unary(
+                slot_value(slots, inner),
+                Layout::Nt,
+                Layout::Nt,
+                cs,
+                |values, cs| resi(values, days, cs),
+            ),
+            Node::Quantile(inner, days, q) => eval_cells_unary(
+                slot_value(slots, inner),
+                Layout::Nt,
+                Layout::Nt,
+                cs,
+                |values, cs| quantile(values, days, f64::from_bits(q), cs),
+            ),
             Node::DecayLinear(inner, days) => eval_cells_unary(
                 slot_value(slots, inner),
                 Layout::Nt,
@@ -1475,6 +1526,36 @@ mod tests {
                 2,
             )),
             Box::new(Expr::Field("industry".to_string())),
+        );
+
+        let actual = eval_dag(&expr, &cs)?;
+        let expected = eval_tree(&expr, &cs)?;
+
+        assert_vec_close(&actual, &expected);
+        Ok(())
+    }
+
+    #[test]
+    fn dag_eval_matches_tree_for_regression_and_quantile_ops() -> Result<()> {
+        let cs = test_cellset_fields(
+            HashMap::from([("close".to_string(), vec![1.0, 3.0, 5.0, 7.0, 8.0])]),
+            vec![0..5],
+            vec![0..1, 1..2, 2..3, 3..4, 4..5],
+            vec![0, 1, 2, 3, 4],
+        );
+        let expr = Expr::Add(
+            Box::new(Expr::Slope(Box::new(Expr::Field("close".to_string())), 3)),
+            Box::new(Expr::Add(
+                Box::new(Expr::Rsquare(Box::new(Expr::Field("close".to_string())), 3)),
+                Box::new(Expr::Add(
+                    Box::new(Expr::Resi(Box::new(Expr::Field("close".to_string())), 3)),
+                    Box::new(Expr::Quantile(
+                        Box::new(Expr::Field("close".to_string())),
+                        3,
+                        0.8,
+                    )),
+                )),
+            )),
         );
 
         let actual = eval_dag(&expr, &cs)?;

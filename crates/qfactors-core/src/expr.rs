@@ -31,6 +31,10 @@ pub enum Expr {
     TsRank(Box<Expr>, usize),
     TsRankRaw(Box<Expr>, usize),
     TsStd(Box<Expr>, usize),
+    Slope(Box<Expr>, usize),
+    Rsquare(Box<Expr>, usize),
+    Resi(Box<Expr>, usize),
+    Quantile(Box<Expr>, usize, f64),
     DecayLinear(Box<Expr>, usize),
     Correlation(Box<Expr>, Box<Expr>, usize),
     Covariance(Box<Expr>, Box<Expr>, usize),
@@ -52,7 +56,7 @@ pub enum Expr {
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Expr::Field(name) => write!(f, "field({name})"),
+            Expr::Field(name) => write!(f, "col({name})"),
             Expr::Const(value) => write!(f, "{value}"),
             Expr::Add(lhs, rhs) => write!(f, "add({lhs}, {rhs})"),
             Expr::Sub(lhs, rhs) => write!(f, "sub({lhs}, {rhs})"),
@@ -71,6 +75,10 @@ impl fmt::Display for Expr {
             Expr::TsRank(inner, days) => write!(f, "ts_rank({inner}, {days})"),
             Expr::TsRankRaw(inner, days) => write!(f, "ts_rank_raw({inner}, {days})"),
             Expr::TsStd(inner, days) => write!(f, "ts_std({inner}, {days})"),
+            Expr::Slope(inner, days) => write!(f, "slope({inner}, {days})"),
+            Expr::Rsquare(inner, days) => write!(f, "rsquare({inner}, {days})"),
+            Expr::Resi(inner, days) => write!(f, "resi({inner}, {days})"),
+            Expr::Quantile(inner, days, q) => write!(f, "quantile({inner}, {days}, {q})"),
             Expr::DecayLinear(inner, days) => write!(f, "decay_linear({inner}, {days})"),
             Expr::Correlation(lhs, rhs, days) => write!(f, "correlation({lhs}, {rhs}, {days})"),
             Expr::Covariance(lhs, rhs, days) => write!(f, "covariance({lhs}, {rhs}, {days})"),
@@ -151,6 +159,10 @@ pub fn visit_fields(expr: &Expr, visit: &mut impl FnMut(&str)) {
         | Expr::TsRank(inner, _)
         | Expr::TsRankRaw(inner, _)
         | Expr::TsStd(inner, _)
+        | Expr::Slope(inner, _)
+        | Expr::Rsquare(inner, _)
+        | Expr::Resi(inner, _)
+        | Expr::Quantile(inner, _, _)
         | Expr::DecayLinear(inner, _)
         | Expr::Rank(inner)
         | Expr::Scale(inner, _)
@@ -183,6 +195,12 @@ pub fn rename_fields(expr: &Expr, names: &BTreeMap<String, String>) -> Expr {
         Expr::TsRank(inner, days) => unary_window(inner, *days, names, Expr::TsRank),
         Expr::TsRankRaw(inner, days) => unary_window(inner, *days, names, Expr::TsRankRaw),
         Expr::TsStd(inner, days) => unary_window(inner, *days, names, Expr::TsStd),
+        Expr::Slope(inner, days) => unary_window(inner, *days, names, Expr::Slope),
+        Expr::Rsquare(inner, days) => unary_window(inner, *days, names, Expr::Rsquare),
+        Expr::Resi(inner, days) => unary_window(inner, *days, names, Expr::Resi),
+        Expr::Quantile(inner, days, q) => {
+            Expr::Quantile(Box::new(rename_fields(inner, names)), *days, *q)
+        }
         Expr::DecayLinear(inner, days) => unary_window(inner, *days, names, Expr::DecayLinear),
         Expr::Correlation(lhs, rhs, days) => {
             binary_window(lhs, rhs, *days, names, Expr::Correlation)
@@ -257,6 +275,7 @@ fn binary_window(
     )
 }
 
+#[allow(dead_code)]
 pub(crate) fn lookback_depth(expr: &Expr) -> usize {
     match expr {
         Expr::Field(_) | Expr::Const(_) => 0,
@@ -271,6 +290,10 @@ pub(crate) fn lookback_depth(expr: &Expr) -> usize {
         | Expr::TsRank(inner, days)
         | Expr::TsRankRaw(inner, days)
         | Expr::TsStd(inner, days)
+        | Expr::Slope(inner, days)
+        | Expr::Rsquare(inner, days)
+        | Expr::Resi(inner, days)
+        | Expr::Quantile(inner, days, _)
         | Expr::DecayLinear(inner, days) => lookback_depth(inner) + days.saturating_sub(1),
         Expr::Correlation(lhs, rhs, days) | Expr::Covariance(lhs, rhs, days) => {
             lookback_depth(lhs).max(lookback_depth(rhs)) + days.saturating_sub(1)
@@ -405,7 +428,7 @@ mod tests {
 
         assert_eq!(
             expr.to_string(),
-            "mul(-1, rank(sub(field(close), delay(field(open), 10))))"
+            "mul(-1, rank(sub(col(close), delay(col(open), 10))))"
         );
     }
 

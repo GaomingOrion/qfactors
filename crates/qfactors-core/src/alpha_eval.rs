@@ -121,6 +121,34 @@ pub fn eval(expr: &Expr, cs: &CellSet) -> Result<Val> {
                 layout: Layout::Nt,
             })
         }
+        Expr::Slope(inner, days) => {
+            let values = to_cells(eval(inner, cs)?, Layout::Nt, cs);
+            Ok(Val::Cells {
+                values: slope(&values, *days, cs),
+                layout: Layout::Nt,
+            })
+        }
+        Expr::Rsquare(inner, days) => {
+            let values = to_cells(eval(inner, cs)?, Layout::Nt, cs);
+            Ok(Val::Cells {
+                values: rsquare(&values, *days, cs),
+                layout: Layout::Nt,
+            })
+        }
+        Expr::Resi(inner, days) => {
+            let values = to_cells(eval(inner, cs)?, Layout::Nt, cs);
+            Ok(Val::Cells {
+                values: resi(&values, *days, cs),
+                layout: Layout::Nt,
+            })
+        }
+        Expr::Quantile(inner, days, q) => {
+            let values = to_cells(eval(inner, cs)?, Layout::Nt, cs);
+            Ok(Val::Cells {
+                values: quantile(&values, *days, *q, cs),
+                layout: Layout::Nt,
+            })
+        }
         Expr::DecayLinear(inner, days) => {
             let values = to_cells(eval(inner, cs)?, Layout::Nt, cs);
             Ok(Val::Cells {
@@ -842,6 +870,22 @@ pub(crate) fn ts_std(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
     })
 }
 
+pub(crate) fn slope(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
+    ts_window(values, days, cs, slope_window)
+}
+
+pub(crate) fn rsquare(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
+    ts_window(values, days, cs, rsquare_window)
+}
+
+pub(crate) fn resi(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
+    ts_window(values, days, cs, resi_window)
+}
+
+pub(crate) fn quantile(values: &[f64], days: usize, q: f64, cs: &CellSet) -> Vec<f64> {
+    ts_window(values, days, cs, |window| quantile_window(window, q))
+}
+
 pub(crate) fn decay_linear(values: &[f64], days: usize, cs: &CellSet) -> Vec<f64> {
     ts_rolling_decay(values, days, cs)
 }
@@ -1014,6 +1058,82 @@ fn correlation_window(lhs: &[f64], rhs: &[f64]) -> f64 {
         f64::NAN
     } else {
         covariance / (lhs_variance.sqrt() * rhs_variance.sqrt())
+    }
+}
+
+fn regression_parts(window: &[f64]) -> Option<(f64, f64, f64, f64)> {
+    let n = window.len();
+    if n < 2 {
+        return None;
+    }
+
+    let n_f = n as f64;
+    let x_mean = (n_f - 1.0) / 2.0;
+    let y_mean = window.iter().sum::<f64>() / n_f;
+    let sxx = n_f * (n_f * n_f - 1.0) / 12.0;
+    if sxx == 0.0 {
+        return None;
+    }
+
+    let sum_xy = window
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| idx as f64 * value)
+        .sum::<f64>();
+    let sxy = sum_xy - n_f * x_mean * y_mean;
+    let syy = window
+        .iter()
+        .map(|value| {
+            let centered = value - y_mean;
+            centered * centered
+        })
+        .sum::<f64>();
+    Some((sxy, sxx, syy, y_mean))
+}
+
+fn slope_window(window: &[f64]) -> f64 {
+    let Some((sxy, sxx, _, _)) = regression_parts(window) else {
+        return f64::NAN;
+    };
+    sxy / sxx
+}
+
+fn rsquare_window(window: &[f64]) -> f64 {
+    let Some((sxy, sxx, syy, _)) = regression_parts(window) else {
+        return f64::NAN;
+    };
+    if syy == 0.0 {
+        f64::NAN
+    } else {
+        sxy * sxy / (sxx * syy)
+    }
+}
+
+fn resi_window(window: &[f64]) -> f64 {
+    let Some((sxy, sxx, _, y_mean)) = regression_parts(window) else {
+        return f64::NAN;
+    };
+    let n = window.len() as f64;
+    let x_mean = (n - 1.0) / 2.0;
+    let slope = sxy / sxx;
+    window[window.len() - 1] - y_mean - slope * (n - 1.0 - x_mean)
+}
+
+fn quantile_window(window: &[f64], q: f64) -> f64 {
+    if !(0.0..=1.0).contains(&q) {
+        return f64::NAN;
+    }
+
+    let mut sorted = window.to_vec();
+    sorted.sort_by(|lhs, rhs| lhs.partial_cmp(rhs).unwrap_or(Ordering::Equal));
+    let pos = q * (sorted.len() - 1) as f64;
+    let lo = pos.floor() as usize;
+    let hi = pos.ceil() as usize;
+    if lo == hi {
+        sorted[lo]
+    } else {
+        let frac = pos - lo as f64;
+        sorted[lo] + frac * (sorted[hi] - sorted[lo])
     }
 }
 
@@ -1335,6 +1455,93 @@ mod tests {
             &nan_cs,
         );
         assert!(nan_out.iter().all(|value| value.is_nan()));
+        Ok(())
+    }
+
+    #[test]
+    fn regression_and_quantile_operators_match_hand_examples() -> Result<()> {
+        let cs = test_cellset(
+            vec![1.0, 3.0, 5.0, 7.0, 8.0],
+            one_block(0..5),
+            vec![0..1, 1..2, 2..3, 3..4, 4..5],
+        );
+
+        assert_vec_close(
+            &cells(
+                eval(&Expr::Slope(Box::new(Expr::Field("x".to_string())), 3), &cs)?,
+                &cs,
+            ),
+            &[f64::NAN, f64::NAN, 2.0, 2.0, 1.5],
+        );
+        assert_vec_close(
+            &cells(
+                eval(
+                    &Expr::Rsquare(Box::new(Expr::Field("x".to_string())), 3),
+                    &cs,
+                )?,
+                &cs,
+            ),
+            &[f64::NAN, f64::NAN, 1.0, 1.0, 9.0 / (2.0 * (14.0 / 3.0))],
+        );
+        assert_vec_close(
+            &cells(
+                eval(&Expr::Resi(Box::new(Expr::Field("x".to_string())), 3), &cs)?,
+                &cs,
+            ),
+            &[f64::NAN, f64::NAN, 0.0, 0.0, -1.0 / 6.0],
+        );
+
+        let flat_cs = test_cellset(vec![2.0, 2.0, 2.0], one_block(0..3), vec![0..1, 1..2, 2..3]);
+        let flat_slope = cells(
+            eval(
+                &Expr::Slope(Box::new(Expr::Field("x".to_string())), 3),
+                &flat_cs,
+            )?,
+            &flat_cs,
+        );
+        let flat_rsquare = cells(
+            eval(
+                &Expr::Rsquare(Box::new(Expr::Field("x".to_string())), 3),
+                &flat_cs,
+            )?,
+            &flat_cs,
+        );
+        let flat_resi = cells(
+            eval(
+                &Expr::Resi(Box::new(Expr::Field("x".to_string())), 3),
+                &flat_cs,
+            )?,
+            &flat_cs,
+        );
+        assert_f64_eq(flat_slope[2], 0.0);
+        assert!(flat_rsquare[2].is_nan());
+        assert_f64_eq(flat_resi[2], 0.0);
+
+        let q_cs = test_cellset(
+            vec![3.0, 1.0, 2.0, 2.0, 5.0],
+            one_block(0..5),
+            vec![0..1, 1..2, 2..3, 3..4, 4..5],
+        );
+        assert_vec_close(
+            &cells(
+                eval(
+                    &Expr::Quantile(Box::new(Expr::Field("x".to_string())), 3, 0.8),
+                    &q_cs,
+                )?,
+                &q_cs,
+            ),
+            &[f64::NAN, f64::NAN, 2.6, 2.0, 3.8],
+        );
+        assert_vec_close(
+            &cells(
+                eval(
+                    &Expr::Quantile(Box::new(Expr::Field("x".to_string())), 3, 0.2),
+                    &q_cs,
+                )?,
+                &q_cs,
+            ),
+            &[f64::NAN, f64::NAN, 1.4, 1.4, 2.0],
+        );
         Ok(())
     }
 
