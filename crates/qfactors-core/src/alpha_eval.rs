@@ -1076,8 +1076,14 @@ fn covariance_window(lhs: &[f64], rhs: &[f64]) -> f64 {
     if lhs.len() < 2 {
         return f64::NAN;
     }
-    let lhs_mean = lhs.iter().sum::<f64>() / lhs.len() as f64;
-    let rhs_mean = rhs.iter().sum::<f64>() / rhs.len() as f64;
+    let mut lhs_sum = 0.0;
+    let mut rhs_sum = 0.0;
+    for (lhs, rhs) in lhs.iter().zip(rhs) {
+        lhs_sum += *lhs;
+        rhs_sum += *rhs;
+    }
+    let lhs_mean = lhs_sum / lhs.len() as f64;
+    let rhs_mean = rhs_sum / rhs.len() as f64;
     lhs.iter()
         .zip(rhs)
         .map(|(lhs, rhs)| (lhs - lhs_mean) * (rhs - rhs_mean))
@@ -1089,8 +1095,14 @@ fn correlation_window(lhs: &[f64], rhs: &[f64]) -> f64 {
     if lhs.len() < 2 {
         return f64::NAN;
     }
-    let lhs_mean = lhs.iter().sum::<f64>() / lhs.len() as f64;
-    let rhs_mean = rhs.iter().sum::<f64>() / rhs.len() as f64;
+    let mut lhs_sum = 0.0;
+    let mut rhs_sum = 0.0;
+    for (lhs, rhs) in lhs.iter().zip(rhs) {
+        lhs_sum += *lhs;
+        rhs_sum += *rhs;
+    }
+    let lhs_mean = lhs_sum / lhs.len() as f64;
+    let rhs_mean = rhs_sum / rhs.len() as f64;
     let mut covariance = 0.0;
     let mut lhs_variance = 0.0;
     let mut rhs_variance = 0.0;
@@ -1118,17 +1130,18 @@ fn regression_parts(window: &[f64]) -> Option<(f64, f64, f64, f64)> {
 
     let n_f = n as f64;
     let x_mean = (n_f - 1.0) / 2.0;
-    let y_mean = window.iter().sum::<f64>() / n_f;
+    let mut y_sum = 0.0;
+    let mut sum_xy = 0.0;
+    for (idx, value) in window.iter().enumerate() {
+        y_sum += *value;
+        sum_xy += idx as f64 * *value;
+    }
+    let y_mean = y_sum / n_f;
     let sxx = n_f * (n_f * n_f - 1.0) / 12.0;
     if sxx == 0.0 {
         return None;
     }
 
-    let sum_xy = window
-        .iter()
-        .enumerate()
-        .map(|(idx, value)| idx as f64 * value)
-        .sum::<f64>();
     let sxy = sum_xy - n_f * x_mean * y_mean;
     let syy = window
         .iter()
