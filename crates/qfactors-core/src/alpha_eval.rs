@@ -785,7 +785,7 @@ fn xs_per_block(
     input_layout: Layout,
     output: Layout,
     cs: &CellSet,
-    f: impl Fn(&[(usize, f64)]) -> Vec<(usize, f64)> + Sync,
+    f: impl Fn(Vec<(usize, f64)>) -> Vec<(usize, f64)> + Sync,
 ) -> Vec<f64> {
     scatter_pairs(values.len(), output, cs, |block| {
         let present = block
@@ -795,7 +795,7 @@ fn xs_per_block(
                 (!value.is_nan()).then_some((tn_idx, value))
             })
             .collect::<Vec<_>>();
-        f(&present)
+        f(present)
     })
 }
 
@@ -806,7 +806,7 @@ fn xs_per_group(
     groups_layout: Layout,
     output: Layout,
     cs: &CellSet,
-    f: impl Fn(&[(usize, f64)]) -> Vec<(usize, f64)> + Sync,
+    f: impl Fn(Vec<(usize, f64)>) -> Vec<(usize, f64)> + Sync,
 ) -> Vec<f64> {
     scatter_pairs(values.len(), output, cs, |block| {
         let mut buckets: HashMap<u64, Vec<(usize, f64)>> = HashMap::new();
@@ -822,7 +822,7 @@ fn xs_per_group(
                 .push((tn_idx, value));
         }
 
-        buckets.values().flat_map(|bucket| f(bucket)).collect()
+        buckets.into_values().flat_map(|bucket| f(bucket)).collect()
     })
 }
 
@@ -1025,11 +1025,9 @@ pub(crate) fn group_neutralize(
     )
 }
 
-fn rank_pairs(present: &[(usize, f64)]) -> Vec<(usize, f64)> {
-    let mut present = present.to_vec();
-    present.sort_by(|(_, lhs), (_, rhs)| lhs.partial_cmp(rhs).unwrap_or(Ordering::Equal));
+fn rank_pairs(mut present: Vec<(usize, f64)>) -> Vec<(usize, f64)> {
+    present.sort_unstable_by(|(_, lhs), (_, rhs)| lhs.partial_cmp(rhs).unwrap_or(Ordering::Equal));
     let count = present.len() as f64;
-    let mut out = Vec::with_capacity(present.len());
     let mut start = 0usize;
     while start < present.len() {
         let mut end = start + 1;
@@ -1039,12 +1037,12 @@ fn rank_pairs(present: &[(usize, f64)]) -> Vec<(usize, f64)> {
 
         let rank_avg = (start + 1 + end) as f64 / 2.0;
         let pct = rank_avg / count;
-        for (idx, _) in &present[start..end] {
-            out.push((*idx, pct));
+        for (_, value) in &mut present[start..end] {
+            *value = pct;
         }
         start = end;
     }
-    out
+    present
 }
 
 /// Percentile time-series rank (qfactors default). The current value's average
@@ -2073,6 +2071,24 @@ mod tests {
             &tie_cs,
         );
         assert_eq!(tie_out, [0.25, 0.625, 0.625, 1.0]);
+
+        let dense_tie_cs = test_cellset(
+            vec![2.0, 2.0, 1.0, 1.0, 3.0, 3.0],
+            vec![0..1, 1..2, 2..3, 3..4, 4..5, 5..6],
+            one_block(0..6),
+        );
+        let dense_tie_out = to_cells(
+            eval(
+                &Expr::Rank(Box::new(Expr::Field("x".to_string()))),
+                &dense_tie_cs,
+            )?,
+            Layout::Tn,
+            &dense_tie_cs,
+        );
+        assert_vec_close(
+            &dense_tie_out,
+            &[7.0 / 12.0, 7.0 / 12.0, 0.25, 0.25, 11.0 / 12.0, 11.0 / 12.0],
+        );
 
         let nan_cs = test_cellset(
             vec![10.0, f64::NAN, 20.0, 30.0],
