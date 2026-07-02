@@ -8,3 +8,4 @@ __pycache__/
 *.py[cod]
 docs/plans/*
 !docs/plans/worldquant101_manifest.md
+docs/review/

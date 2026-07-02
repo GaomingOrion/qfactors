@@ -25,7 +25,7 @@ Common operations include:
 - unary transforms: `abs`, `log`, `sign`, `rank`, `scale`
 - time-series windows: `delay`, `delta`, `ts_sum`, `ts_mean`, `product`,
   `ts_min`, `ts_max`, `ts_argmin`, `ts_argmax`, `ts_rank`, `ts_rank_raw`,
-  `ts_std`, `decay_linear`
+  `ts_std`, `slope`, `rsquare`, `resi`, `quantile`, `decay_linear`
 - binary functions: `min`, `max`, `power`, `signed_power`, `correlation`,
   `covariance`, `group_rank`, `group_neutralize`, `where_`
 
@@ -67,19 +67,22 @@ assert expr.collect_inputs() == {"close", "open"}
 adjusted = expr.replace_inputs({"close": "adj_close", "open": "adj_open"})
 ```
 
-Alpha executors intentionally do not accept `column_aliases`; field remapping is
-part of the expression tree so there is only one visible aliasing path.
+Field remapping is part of the expression tree, so there is a single visible
+aliasing path (`replace_inputs()` or a library `input_alias`) rather than an
+executor-level alias argument.
 
-## WorldQuant 101
+## Built-in Factor Libraries
 
 ```python
-alphas = qf.worldquant101_alphas(
+alphas = qf.worldquant_alpha101(
     {"close": "adj_close", "open": "adj_open"},
     alphas=["alpha13", "alpha101"],
 )
 out = qf.compute_alphas(df, "asset", "time", alphas)
 ```
 
-Pass an empty dict for identity input mapping. See
-[worldquant101.md](worldquant101.md) for implementation defaults and required
+`qf.qlib_alpha158(input_alias, alphas=None)` exposes the Qlib Alpha158 set with
+the same signature. Pass an empty dict for identity input mapping. See
+[worldquant_alpha101.md](worldquant_alpha101.md) and
+[qlib_alpha158.md](qlib_alpha158.md) for implementation defaults and required
 input fields.

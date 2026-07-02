@@ -4,24 +4,23 @@ qfactors is organized as a Rust workspace with a Python extension module.
 
 ## Crates
 
-- `qfactors-core`: panel layout, column validation, factor execution, alpha
-  expression evaluation, catalogs, and result sinks.
-- `qfactors-factors`: built-in factor kernels and WorldQuant 101 alpha
-  registrations.
-- `qfactors-macros`: procedural macros used to register factor kernels and
-  generate catalog metadata.
+- `qfactors-core`: panel layout, column validation, alpha expression evaluation,
+  and result sinks.
+- `qfactors-factors`: built-in alpha builders — WorldQuant 101 and Qlib
+  Alpha158.
 - `qfactors-py`: PyO3 extension module exposing the Rust engine to Python as
   `qfactors`.
 
 ## Data Flow
 
 1. Python or Rust callers provide a Polars DataFrame, symbol/time column names,
-   requested factor or alpha names, and observation times.
-2. `qfactors-core` validates structural columns, resolves logical input fields
-   through optional aliases, sorts the panel, and builds the internal cell set.
-3. Factor kernels or alpha expressions compute full panel values.
-4. Results are sampled at the requested observation times and returned in memory
-   or written to Parquet through the sink layer.
+   and a list of aliased alpha expressions.
+2. `qfactors-core` validates structural columns, sorts the panel by
+   `(symbol, time)`, and builds the internal cell set.
+3. The evaluator computes each expression over the full panel.
+4. Results are returned in memory as a `(time, symbol)` frame, appended to the
+   input in original row order (`with_alphas`), or written to Parquet through the
+   sink layer.
 
 ## Alpha Evaluation
 

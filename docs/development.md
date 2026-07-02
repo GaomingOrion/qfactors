@@ -25,9 +25,9 @@ uv run maturin develop
 uv run pytest
 ```
 
-`cargo test --workspace` includes Rust unit tests and `trybuild` macro UI tests.
-The first run can take several minutes because Polars and PyO3 dependencies are
-compiled from source.
+`cargo test --workspace` runs the Rust unit and integration tests. The first run
+can take several minutes because Polars and PyO3 dependencies are compiled from
+source.
 
 ## Python Extension
 

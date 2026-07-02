@@ -15,14 +15,13 @@ without moving the hot path out of Rust.
 - **Expression API for research iteration:** compose alphas with
   `qfactors.col("close")`, `qfactors.lit(1.0)`, operators, windows, ranks,
   neutralization, and `replace_inputs()` templates.
-- **WorldQuant 101 built in:** `worldquant101_alphas()` returns expression
-  objects for `alpha1` through `alpha101`, with documented project defaults and
-  input aliasing for adjusted or vendor-specific column names.
-- **Regression guarded:** every registered alpha is checked against a frozen
+- **Factor libraries built in:** `worldquant_alpha101()` returns `alpha1`
+  through `alpha101`, and `qlib_alpha158()` returns the Qlib Alpha158 feature
+  set — both as expression objects, with documented project defaults and input
+  aliasing for adjusted or vendor-specific column names.
+- **Regression guarded:** every built-in alpha is checked against a frozen
   synthetic golden fixture at `1e-8` tolerance, so engine changes are reviewed
   against stable numerical output.
-- **Extensible Rust kernels:** procedural macros register custom factor kernels
-  with windows, parameters, and multi-output support.
 
 The project is early-stage. APIs are usable for experimentation and internal
 research workflows, but should be treated as pre-1.0.
@@ -39,7 +38,8 @@ stable — a frozen golden baseline guards every change at `1e-8` tolerance.
 - `O(n)` rolling-window kernels (Welford variance, monotonic-deque min/max,
   rolling sum/mean/decay) replacing per-window recomputation.
 - Global allocator (jemalloc on Unix, mimalloc on Windows).
-- WorldQuant 101 alphas (`alpha1`–`alpha101`).
+- WorldQuant 101 (`alpha1`–`alpha101`) and Qlib Alpha158 factor libraries, both
+  as plain expression builders.
 - v0.3.0 Python expression API: `PyExpr`, `with_alphas`, full-history
   `compute_alphas`, input replacement templates, and type stubs.
 
@@ -95,7 +95,7 @@ df = pl.DataFrame(
     }
 )
 
-alphas = qfactors.worldquant101_alphas({}, alphas=["alpha101"])
+alphas = qfactors.worldquant_alpha101({}, alphas=["alpha101"])
 out = qfactors.compute_alphas(
     df=df,
     symbol_col="asset",
@@ -116,36 +116,31 @@ df_with_alpha = qfactors.with_alphas(
 )
 ```
 
-`compute_panel` computes registered factor kernels at requested observation
-times. `compute_alphas` computes expression alphas over the full panel and
-returns a Polars DataFrame by default, or a summary dict when `output_path` is
-provided. `with_alphas` appends expression outputs to the input DataFrame in its
-original row order.
+`compute_alphas` computes expression alphas over the full panel and returns a
+Polars DataFrame by default, or a summary dict when `output_path` is provided.
+`with_alphas` appends expression outputs to the input DataFrame in its original
+row order.
 
 ## Public API
 
 Python functions:
 
-- `qfactors.compute_panel(df, symbol_col, time_col, factors, observation_times, column_aliases=None, output_path=None)`
 - `qfactors.compute_alphas(df, symbol_col, time_col, alphas, output_path=None)`
 - `qfactors.with_alphas(df, symbol_col, time_col, alphas)`
 - `qfactors.col(name)`, `qfactors.lit(value)`, and expression operators
-- `qfactors.worldquant101_alphas(input_alias, alphas=None)`
-- `qfactors.factor_catalog()`
+- `qfactors.worldquant_alpha101(input_alias, alphas=None)`
+- `qfactors.qlib_alpha158(input_alias, alphas=None)`
 
 Input rules:
 
-- `symbol_col`, `time_col`, and `compute_panel` observation times cannot contain
-  nulls.
+- `symbol_col` and `time_col` cannot contain nulls.
 - Structural NaN values are rejected.
 - Float input nulls are converted to NaN so factor logic can propagate missing
   data.
 - The engine sorts panel rows by `(symbol_col, time_col)` and rejects duplicate
   symbol-time pairs.
-- For `compute_panel`, `column_aliases` maps logical names such as `close` to
-  physical input columns such as `adj_close`. Alpha expressions use
-  `replace_inputs()` or `worldquant101_alphas(input_alias=...)` instead; the
-  alpha executors do not accept `column_aliases`.
+- Field remapping lives in the expression tree: use `PyExpr.replace_inputs()` or
+  the `input_alias` argument of `worldquant_alpha101()` / `qlib_alpha158()`.
 
 Memory note:
 
@@ -166,13 +161,18 @@ QF_ENGINE=dag uv run pytest
 Valid values are `tree` and `dag`; invalid values raise an error. The tree
 engine remains the default until the DAG path is fully benchmarked and promoted.
 
-## WorldQuant 101
+## Factor Libraries
 
-The built-in alpha library includes `alpha1` through `alpha101`. See
-[docs/worldquant101.md](docs/worldquant101.md) for supported input fields,
-coverage tiers, and implementation defaults.
+Two built-in alpha libraries ship as expression builders:
 
-This project is not affiliated with WorldQuant.
+- **WorldQuant 101** (`alpha1`–`alpha101`) — see
+  [docs/worldquant_alpha101.md](docs/worldquant_alpha101.md) for supported input
+  fields, coverage tiers, and implementation defaults.
+- **Qlib Alpha158** (9 kbar + 4 price + 29 rolling groups × 5 windows) — see
+  [docs/qlib_alpha158.md](docs/qlib_alpha158.md) for the factor list and caliber
+  notes.
+
+This project is not affiliated with WorldQuant, Microsoft, or Qlib.
 
 ## Development Checks
 

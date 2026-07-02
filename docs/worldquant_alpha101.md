@@ -1,6 +1,6 @@
 # WorldQuant 101 Alphas
 
-qfactors registers `alpha1` through `alpha101` as built-in alpha expressions.
+qfactors builds `alpha1` through `alpha101` as built-in alpha expressions.
 The implementation follows the formula set from Kakushadze, "101 Formulaic
 Alphas", Appendix A, with project-specific defaults documented here.
 
@@ -9,22 +9,23 @@ Alphas", Appendix A, with project-specific defaults documented here.
 Use:
 
 ```python
-alphas = qfactors.worldquant101_alphas(
+alphas = qfactors.worldquant_alpha101(
     {"close": "adj_close"},
     alphas=["alpha13", "alpha101"],
 )
 qfactors.compute_alphas(df, "asset", "time", alphas)
 ```
 
-`worldquant101_alphas(input_alias, alphas=None)` returns expression objects for
-the built-in `alpha1` through `alpha101` set. `input_alias` maps canonical input
-names such as `close` to physical DataFrame columns such as `adj_close`; pass an
-empty dict for identity mapping. `compute_alphas()` evaluates those expressions
-over the full `(time, symbol)` panel, while `with_alphas()` appends them to the
-input DataFrame in original row order. See
+`worldquant_alpha101(input_alias, alphas=None)` returns `PyExpr` objects for the
+built-in `alpha1` through `alpha101` set (all 101 when `alphas` is omitted, or
+the named subset in request order). `input_alias` maps canonical input names
+such as `close` to physical DataFrame columns such as `adj_close`; pass an empty
+dict for identity mapping. `compute_alphas()` evaluates those expressions over
+the full `(time, symbol)` panel, while `with_alphas()` appends them to the input
+DataFrame in original row order. See
 [expression_api.md](expression_api.md) for custom expression construction.
-Alpha executors do not accept `column_aliases`; use `input_alias` or
-`PyExpr.replace_inputs()` for alpha field remapping.
+Field remapping happens inside the expression tree, so use `input_alias` (or
+`PyExpr.replace_inputs()`) rather than a separate executor-level alias argument.
 
 ## Defaults
 
@@ -33,7 +34,7 @@ Alpha executors do not accept `column_aliases`; use `input_alias` or
 - Non-integer lookback windows use `floor(d)`.
 - Paper `min(x, d)` and `max(x, d)` are implemented as rolling `ts_min(x, d)`
   and `ts_max(x, d)`.
-- Dynamic exponent formulas use expression-valued `power` and `signedpower`.
+- Dynamic exponent formulas use expression-valued `power` and `signed_power`.
 - `IndClass.sector`, `IndClass.industry`, and `IndClass.subindustry` map to
   numeric input columns named `sector`, `industry`, and `subindustry`.
 
@@ -53,7 +54,7 @@ The detailed implementation manifest is kept in
 
 ## Verification
 
-- Rust tests assert all `alpha1` through `alpha101` names are registered.
+- Rust tests assert the builder returns exactly `alpha1` through `alpha101`.
 - Smoke tests compute all 101 alphas on a complete synthetic panel.
 - Golden regression coverage compares all alpha outputs against a frozen
   synthetic Parquet fixture.
