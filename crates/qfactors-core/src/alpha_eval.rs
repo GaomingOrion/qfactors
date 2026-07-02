@@ -232,15 +232,38 @@ pub fn to_cells(value: Val, want: Layout, cs: &CellSet) -> Vec<f64> {
 fn eval_binary(lhs: &Expr, rhs: &Expr, cs: &CellSet, op: impl Fn(f64, f64) -> f64) -> Result<Val> {
     let lhs = eval(lhs, cs)?;
     let rhs = eval(rhs, cs)?;
-    match (&lhs, &rhs) {
-        (Val::Scalar(lhs), Val::Scalar(rhs)) => Ok(Val::Scalar(op(*lhs, *rhs))),
-        _ => {
-            let layout = match (&lhs, &rhs) {
-                (Val::Cells { layout, .. }, _) | (_, Val::Cells { layout, .. }) => *layout,
-                (Val::Scalar(_), Val::Scalar(_)) => unreachable!("handled above"),
+    match (lhs, rhs) {
+        (Val::Scalar(lhs), Val::Scalar(rhs)) => Ok(Val::Scalar(op(lhs, rhs))),
+        (Val::Cells { values, layout }, Val::Scalar(rhs)) => Ok(Val::Cells {
+            values: values.into_iter().map(|lhs| op(lhs, rhs)).collect(),
+            layout,
+        }),
+        (Val::Scalar(lhs), Val::Cells { values, layout }) => Ok(Val::Cells {
+            values: values.into_iter().map(|rhs| op(lhs, rhs)).collect(),
+            layout,
+        }),
+        (
+            Val::Cells {
+                values: lhs,
+                layout,
+            },
+            Val::Cells {
+                values: rhs,
+                layout: rhs_layout,
+            },
+        ) => {
+            let rhs = if rhs_layout == layout {
+                rhs
+            } else {
+                to_cells(
+                    Val::Cells {
+                        values: rhs,
+                        layout: rhs_layout,
+                    },
+                    layout,
+                    cs,
+                )
             };
-            let lhs = to_cells(lhs, layout, cs);
-            let rhs = to_cells(rhs, layout, cs);
             Ok(Val::Cells {
                 values: lhs
                     .into_iter()
@@ -288,15 +311,43 @@ fn eval_where(cond: &Expr, when_true: &Expr, when_false: &Expr, cs: &CellSet) ->
         return Ok(Val::Scalar(where_value(cond, when_true, when_false)));
     };
 
-    let cond = to_cells(cond, layout, cs);
-    let when_true = to_cells(when_true, layout, cs);
-    let when_false = to_cells(when_false, layout, cs);
+    let align = |value| match value {
+        Val::Scalar(value) => Val::Scalar(value),
+        Val::Cells {
+            values,
+            layout: current,
+        } if current == layout => Val::Cells { values, layout },
+        Val::Cells {
+            values,
+            layout: current,
+        } => Val::Cells {
+            values: to_cells(
+                Val::Cells {
+                    values,
+                    layout: current,
+                },
+                layout,
+                cs,
+            ),
+            layout,
+        },
+    };
+    let cond = align(cond);
+    let when_true = align(when_true);
+    let when_false = align(when_false);
+    let value_at = |value: &Val, idx: usize| match value {
+        Val::Scalar(value) => *value,
+        Val::Cells { values, .. } => values[idx],
+    };
     Ok(Val::Cells {
-        values: cond
-            .into_iter()
-            .zip(when_true)
-            .zip(when_false)
-            .map(|((cond, when_true), when_false)| where_value(cond, when_true, when_false))
+        values: (0..cs.n_cells)
+            .map(|idx| {
+                where_value(
+                    value_at(&cond, idx),
+                    value_at(&when_true, idx),
+                    value_at(&when_false, idx),
+                )
+            })
             .collect(),
         layout,
     })
@@ -2036,6 +2087,23 @@ mod tests {
         )?;
 
         assert_eq!(out, Val::Scalar(1.5));
+
+        let cs = test_cellset(vec![1.0, 2.0, 3.0], one_block(0..3), vec![0..1, 1..2, 2..3]);
+        let out = eval(
+            &Expr::Add(
+                Box::new(Expr::Field("x".to_string())),
+                Box::new(Expr::Const(2.5)),
+            ),
+            &cs,
+        )?;
+
+        assert_eq!(
+            out,
+            Val::Cells {
+                values: vec![3.5, 4.5, 5.5],
+                layout: Layout::Nt,
+            }
+        );
         Ok(())
     }
 }
