@@ -853,8 +853,11 @@ pub fn alpha101() -> Expr {
     (close() - open()) / (high() - low() + 0.001)
 }
 
+/// Builds one alpha's expression.
+type AlphaBuilder = fn() -> Expr;
+
 pub fn worldquant_alpha101() -> Vec<(String, Expr)> {
-    let alphas: [(&str, fn() -> Expr); 101] = [
+    let alphas: [(&str, AlphaBuilder); 101] = [
         ("alpha1", alpha1 as fn() -> Expr),
         ("alpha2", alpha2 as fn() -> Expr),
         ("alpha3", alpha3 as fn() -> Expr),

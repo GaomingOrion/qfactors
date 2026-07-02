@@ -6,7 +6,7 @@ use rayon::prelude::*;
 
 use crate::alpha_dag::eval_exprs as eval_exprs_dag;
 use crate::alpha_eval::{eval, to_cells};
-use crate::cellset::{CellSet, ComputePanelOptions, build_cellset};
+use crate::cellset::{CellSet, PanelOptions, build_cellset};
 use crate::compute_sink::{ComputeResult, ComputeSink};
 use crate::error::{QFactorsError, Result};
 use crate::expr::{Expr, collect_fields};
@@ -19,7 +19,7 @@ enum AlphaEngine {
 
 pub fn compute_alphas(
     df: DataFrame,
-    options: ComputePanelOptions,
+    options: PanelOptions,
     alphas: Vec<(String, Expr)>,
     output_path: Option<&str>,
 ) -> Result<ComputeResult> {
@@ -40,7 +40,7 @@ pub fn compute_alphas(
 
 pub fn with_alphas(
     df: DataFrame,
-    options: ComputePanelOptions,
+    options: PanelOptions,
     alphas: Vec<(String, Expr)>,
 ) -> Result<DataFrame> {
     let input_names = df
@@ -93,7 +93,7 @@ fn eval_exprs_tree(exprs: &[Expr], cs: &CellSet) -> Result<Vec<Vec<f64>>> {
 }
 
 fn prepare_alphas(
-    options: &ComputePanelOptions,
+    options: &PanelOptions,
     alphas: Vec<(String, Expr)>,
     input_names: &HashSet<String>,
 ) -> Result<(Vec<String>, Vec<Expr>)> {
@@ -111,7 +111,7 @@ fn prepare_alphas(
 }
 
 fn ensure_output_name_available(
-    options: &ComputePanelOptions,
+    options: &PanelOptions,
     seen: &mut HashSet<String>,
     input_names: &HashSet<String>,
     name: &str,
@@ -139,7 +139,7 @@ fn fields_for(exprs: &[Expr]) -> BTreeSet<String> {
 fn build_full_frame(
     cs: &CellSet,
     results: Vec<(String, Vec<f64>)>,
-    options: &ComputePanelOptions,
+    options: &PanelOptions,
 ) -> Result<DataFrame> {
     let mut columns = Vec::with_capacity(results.len() + 2);
 
@@ -165,8 +165,8 @@ fn build_full_frame(
 mod tests {
     use super::*;
 
-    fn options() -> ComputePanelOptions {
-        ComputePanelOptions {
+    fn options() -> PanelOptions {
+        PanelOptions {
             symbol_col: "asset".to_string(),
             time_col: "time".to_string(),
         }

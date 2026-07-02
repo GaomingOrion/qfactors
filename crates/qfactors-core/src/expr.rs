@@ -275,52 +275,6 @@ fn binary_window(
     )
 }
 
-#[allow(dead_code)]
-pub(crate) fn lookback_depth(expr: &Expr) -> usize {
-    match expr {
-        Expr::Field(_) | Expr::Const(_) => 0,
-        Expr::Delay(inner, days) | Expr::Delta(inner, days) => lookback_depth(inner) + days,
-        Expr::TsSum(inner, days)
-        | Expr::TsMean(inner, days)
-        | Expr::Product(inner, days)
-        | Expr::TsMin(inner, days)
-        | Expr::TsMax(inner, days)
-        | Expr::TsArgMin(inner, days)
-        | Expr::TsArgMax(inner, days)
-        | Expr::TsRank(inner, days)
-        | Expr::TsRankRaw(inner, days)
-        | Expr::TsStd(inner, days)
-        | Expr::Slope(inner, days)
-        | Expr::Rsquare(inner, days)
-        | Expr::Resi(inner, days)
-        | Expr::Quantile(inner, days, _)
-        | Expr::DecayLinear(inner, days) => lookback_depth(inner) + days.saturating_sub(1),
-        Expr::Correlation(lhs, rhs, days) | Expr::Covariance(lhs, rhs, days) => {
-            lookback_depth(lhs).max(lookback_depth(rhs)) + days.saturating_sub(1)
-        }
-        Expr::Add(lhs, rhs)
-        | Expr::Sub(lhs, rhs)
-        | Expr::Mul(lhs, rhs)
-        | Expr::Div(lhs, rhs)
-        | Expr::Min(lhs, rhs)
-        | Expr::Max(lhs, rhs)
-        | Expr::Cmp(_, lhs, rhs)
-        | Expr::GroupRank(lhs, rhs)
-        | Expr::GroupNeutralize(lhs, rhs)
-        | Expr::SignedPower(lhs, rhs)
-        | Expr::Power(lhs, rhs) => lookback_depth(lhs).max(lookback_depth(rhs)),
-        Expr::Where(cond, when_true, when_false) => lookback_depth(cond)
-            .max(lookback_depth(when_true))
-            .max(lookback_depth(when_false)),
-        Expr::Neg(inner)
-        | Expr::Rank(inner)
-        | Expr::Scale(inner, _)
-        | Expr::Abs(inner)
-        | Expr::Log(inner)
-        | Expr::Sign(inner) => lookback_depth(inner),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,16 +384,5 @@ mod tests {
             expr.to_string(),
             "mul(-1, rank(sub(col(close), delay(col(open), 10))))"
         );
-    }
-
-    #[test]
-    fn lookback_depth_accounts_for_time_windows_only() {
-        let expr = Expr::Rank(Box::new(Expr::Covariance(
-            Box::new(Expr::Rank(Box::new(Expr::Field("close".to_string())))),
-            Box::new(Expr::Delta(Box::new(Expr::Field("volume".to_string())), 2)),
-            5,
-        )));
-
-        assert_eq!(lookback_depth(&expr), 6);
     }
 }

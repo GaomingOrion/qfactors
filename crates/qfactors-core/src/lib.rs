@@ -8,7 +8,7 @@ pub mod error;
 pub mod expr;
 pub mod layout;
 
-pub use cellset::ComputePanelOptions;
+pub use cellset::PanelOptions;
 pub use compute_alpha::{compute_alphas, eval_exprs, with_alphas};
 pub use compute_sink::{ComputeResult, ComputeSummary};
 pub use error::{QFactorsError, Result};

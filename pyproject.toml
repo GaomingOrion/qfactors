@@ -30,6 +30,7 @@ Issues = "https://github.com/zer0quant/rfactor/issues"
 [dependency-groups]
 dev = [
     "maturin>=1.8,<2",
+    "numpy>=1.26",
     "pytest>=9.0",
 ]
 

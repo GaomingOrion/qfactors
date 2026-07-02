@@ -10,8 +10,10 @@ static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+pub mod qlib_alpha158;
 pub mod worldquant_alpha101;
 
+pub use qlib_alpha158::qlib_alpha158;
 pub use worldquant_alpha101::worldquant_alpha101;
 
 #[cfg(test)]
@@ -22,7 +24,7 @@ mod tests {
     use std::time::Instant;
 
     use polars::prelude::*;
-    use qfactors_core::{ComputePanelOptions, ComputeResult, Expr, QFactorsError, compute_alphas};
+    use qfactors_core::{ComputeResult, Expr, PanelOptions, QFactorsError, compute_alphas};
 
     use super::*;
 
@@ -82,6 +84,45 @@ mod tests {
                 .map(|symbol_idx| (n_times as i64, format!("S{symbol_idx:04}")))
                 .collect::<Vec<_>>()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn qlib_alpha158_alphas_run_on_complete_synthetic_panel() -> qfactors_core::Result<()> {
+        let alphas = qlib_alpha158();
+        assert_eq!(alphas.len(), 158);
+        let alpha_names = alphas
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect::<Vec<_>>();
+
+        let n_symbols = 6;
+        let n_times = 260;
+        let full = memory_frame(compute_alphas(
+            synthetic_alpha_bench_frame(n_symbols, n_times)?,
+            options(),
+            alphas,
+            None,
+        )?)?;
+
+        let expected_columns = ["time".to_string(), "asset".to_string()]
+            .into_iter()
+            .chain(alpha_names)
+            .collect::<Vec<_>>();
+        assert_eq!(column_names(&full), expected_columns);
+        assert_eq!(full.height(), n_symbols * n_times);
+
+        // End-to-end sanity on the longest window, exercising an existing kernel
+        // plus the new `slope`/`quantile` kernels: all finite once warmup passes.
+        let last =
+            sample_observation_times(full, "time", Series::new("time".into(), [n_times as i64]))?;
+        for factor in ["MA60", "BETA60", "QTLU60"] {
+            let column = last.column(factor)?.try_f64().expect("factor is f64");
+            assert!(
+                column.into_no_null_iter().all(f64::is_finite),
+                "{factor} is finite after warmup"
+            );
+        }
         Ok(())
     }
 
@@ -283,6 +324,65 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn qlib_alpha158_golden_matches_frozen_baseline() -> qfactors_core::Result<()> {
+        // Separate Alpha158 fixture: re-bless only for intentional Alpha158 output changes:
+        //   QLIB_GOLDEN_BLESS=1 cargo test -p qfactors-factors qlib_alpha158_golden -- --nocapture
+        let n_symbols = 12;
+        let n_times = 180;
+        let df = synthetic_alpha_bench_frame(n_symbols, n_times)?;
+        let alpha_names = qlib_alpha158()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+
+        let observation_times = Series::new(
+            "time".into(),
+            [(n_times - 2) as i64, (n_times - 1) as i64, n_times as i64],
+        );
+        let mut out = memory_frame(compute_alphas(df, options(), qlib_alpha158(), None)?)?;
+        out = sample_observation_times(out, "time", observation_times)?;
+
+        let expected_columns = ["time".to_string(), "asset".to_string()]
+            .into_iter()
+            .chain(alpha_names)
+            .collect::<Vec<_>>();
+        assert_eq!(column_names(&out), expected_columns);
+
+        let fixture = format!(
+            "{}/tests/fixtures/golden_qlib_alpha158.parquet",
+            env!("CARGO_MANIFEST_DIR")
+        );
+
+        if env::var("QLIB_GOLDEN_BLESS").is_ok() {
+            std::fs::create_dir_all(
+                std::path::Path::new(&fixture)
+                    .parent()
+                    .expect("fixture path has a parent"),
+            )
+            .expect("create fixtures dir");
+            let file = std::fs::File::create(&fixture).expect("create golden fixture");
+            ParquetWriter::new(file)
+                .finish(&mut out)
+                .expect("write golden fixture");
+            println!(
+                "blessed qlib Alpha158 golden fixture: {fixture} ({} rows)",
+                out.height()
+            );
+            return Ok(());
+        }
+
+        let baseline = ParquetReader::new(
+            std::fs::File::open(&fixture)
+                .expect("qlib Alpha158 golden fixture exists (run once with QLIB_GOLDEN_BLESS=1)"),
+        )
+        .finish()
+        .expect("read qlib Alpha158 golden fixture");
+
+        assert_golden_within_tol(&out, &baseline, 1e-8, 1e-8);
+        Ok(())
+    }
+
     fn assert_golden_within_tol(actual: &DataFrame, baseline: &DataFrame, atol: f64, rtol: f64) {
         assert_eq!(
             column_names(actual),
@@ -339,7 +439,7 @@ mod tests {
 
     fn compute_alpha_names(
         df: DataFrame,
-        options: ComputePanelOptions,
+        options: PanelOptions,
         alpha_names: Vec<String>,
         observation_times: Series,
         output_path: Option<&str>,
@@ -386,8 +486,8 @@ mod tests {
         Ok(df.take(&IdxCa::from_vec("idx".into(), indices))?)
     }
 
-    fn options() -> ComputePanelOptions {
-        ComputePanelOptions {
+    fn options() -> PanelOptions {
+        PanelOptions {
             symbol_col: "asset".to_string(),
             time_col: "time".to_string(),
         }

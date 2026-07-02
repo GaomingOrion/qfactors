@@ -1539,7 +1539,7 @@ mod tests {
     fn dag_eval_matches_tree_for_regression_and_quantile_ops() -> Result<()> {
         let cs = test_cellset_fields(
             HashMap::from([("close".to_string(), vec![1.0, 3.0, 5.0, 7.0, 8.0])]),
-            vec![0..5],
+            std::iter::once(0..5).collect(),
             vec![0..1, 1..2, 2..3, 3..4, 4..5],
             vec![0, 1, 2, 3, 4],
         );

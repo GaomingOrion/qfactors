@@ -10,7 +10,7 @@ const NT_INDEX: &str = "__qfactors_nt_index";
 const ORIG_INDEX: &str = "__qfactors_orig_index";
 
 #[derive(Debug, Clone)]
-pub struct ComputePanelOptions {
+pub struct PanelOptions {
     pub symbol_col: String,
     pub time_col: String,
 }
@@ -30,7 +30,7 @@ pub struct CellSet {
 
 pub fn build_cellset(
     df: &DataFrame,
-    options: &ComputePanelOptions,
+    options: &PanelOptions,
     fields: &BTreeSet<String>,
 ) -> Result<CellSet> {
     let symbol_col = df
@@ -90,7 +90,7 @@ pub fn build_cellset(
 
 fn validate_fields(
     df: &DataFrame,
-    _options: &ComputePanelOptions,
+    _options: &PanelOptions,
     fields: &BTreeSet<String>,
 ) -> Result<()> {
     for column_name in fields {
@@ -104,7 +104,7 @@ fn validate_fields(
 
 fn build_fields(
     df: &DataFrame,
-    _options: &ComputePanelOptions,
+    _options: &PanelOptions,
     fields: &BTreeSet<String>,
 ) -> Result<HashMap<String, Arc<Vec<f64>>>> {
     let mut out = HashMap::with_capacity(fields.len());
@@ -170,14 +170,14 @@ fn is_nan_value(value: &AnyValue<'_>) -> bool {
     }
 }
 
-pub(crate) fn sort_panel(df: &DataFrame, options: &ComputePanelOptions) -> Result<DataFrame> {
+pub(crate) fn sort_panel(df: &DataFrame, options: &PanelOptions) -> Result<DataFrame> {
     Ok(df.sort(
         [&options.symbol_col, &options.time_col],
         SortMultipleOptions::default(),
     )?)
 }
 
-fn sym_blocks(sorted: &DataFrame, options: &ComputePanelOptions) -> Result<Vec<Range<usize>>> {
+fn sym_blocks(sorted: &DataFrame, options: &PanelOptions) -> Result<Vec<Range<usize>>> {
     let n_cells = sorted.height();
     let symbol = sorted.column(&options.symbol_col)?.as_materialized_series();
     let time = sorted.column(&options.time_col)?.as_materialized_series();
@@ -232,8 +232,8 @@ fn time_blocks(times_tn: &Column) -> Result<TimeBlocks> {
 mod tests {
     use super::*;
 
-    fn options() -> ComputePanelOptions {
-        ComputePanelOptions {
+    fn options() -> PanelOptions {
+        PanelOptions {
             symbol_col: "asset".to_string(),
             time_col: "time".to_string(),
         }

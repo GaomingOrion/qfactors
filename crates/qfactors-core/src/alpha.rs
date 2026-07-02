@@ -2,18 +2,18 @@ use std::ops::{Add, Div, Mul, Neg, Sub};
 
 use crate::expr::{CmpOp, Expr};
 
-pub trait IntoAlphaExpr {
-    fn into_alpha_expr(self) -> Expr;
+pub trait IntoExpr {
+    fn into_expr(self) -> Expr;
 }
 
-impl IntoAlphaExpr for Expr {
-    fn into_alpha_expr(self) -> Expr {
+impl IntoExpr for Expr {
+    fn into_expr(self) -> Expr {
         self
     }
 }
 
-impl IntoAlphaExpr for f64 {
-    fn into_alpha_expr(self) -> Expr {
+impl IntoExpr for f64 {
+    fn into_expr(self) -> Expr {
         Expr::Const(self)
     }
 }
@@ -178,12 +178,12 @@ pub fn sign(x: Expr) -> Expr {
     Expr::Sign(Box::new(x))
 }
 
-pub fn signed_power(x: Expr, a: impl IntoAlphaExpr) -> Expr {
-    Expr::SignedPower(Box::new(x), Box::new(a.into_alpha_expr()))
+pub fn signed_power(x: Expr, a: impl IntoExpr) -> Expr {
+    Expr::SignedPower(Box::new(x), Box::new(a.into_expr()))
 }
 
-pub fn power(x: Expr, a: impl IntoAlphaExpr) -> Expr {
-    Expr::Power(Box::new(x), Box::new(a.into_alpha_expr()))
+pub fn power(x: Expr, a: impl IntoExpr) -> Expr {
+    Expr::Power(Box::new(x), Box::new(a.into_expr()))
 }
 
 pub fn min(x: Expr, y: Expr) -> Expr {

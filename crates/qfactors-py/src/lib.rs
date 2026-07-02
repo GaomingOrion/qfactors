@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3_polars::PyDataFrame;
 use qfactors_core::{
-    ComputePanelOptions, ComputeResult, ComputeSummary, Expr, QFactorsError,
+    ComputeResult, ComputeSummary, Expr, PanelOptions, QFactorsError,
     compute_alphas as compute_alphas_core, with_alphas as with_alphas_core,
 };
 
@@ -51,7 +51,7 @@ fn compute_alphas_py(
     alphas: Vec<Py<PyExpr>>,
     output_path: Option<&str>,
 ) -> PyResult<Py<PyAny>> {
-    let options = ComputePanelOptions {
+    let options = PanelOptions {
         symbol_col: symbol_col.to_string(),
         time_col: time_col.to_string(),
     };
@@ -78,7 +78,7 @@ fn with_alphas_py(
     time_col: &str,
     alphas: Vec<Py<PyExpr>>,
 ) -> PyResult<PyDataFrame> {
-    let options = ComputePanelOptions {
+    let options = PanelOptions {
         symbol_col: symbol_col.to_string(),
         time_col: time_col.to_string(),
     };
@@ -94,12 +94,26 @@ fn worldquant_alpha101_py(
     input_alias: HashMap<String, String>,
     alphas: Option<Vec<String>>,
 ) -> PyResult<Vec<PyExpr>> {
+    alpha_builder_py(qfactors_factors::worldquant_alpha101(), input_alias, alphas)
+}
+
+#[pyfunction(name = "qlib_alpha158", signature = (input_alias, alphas = None))]
+fn qlib_alpha158_py(
+    input_alias: HashMap<String, String>,
+    alphas: Option<Vec<String>>,
+) -> PyResult<Vec<PyExpr>> {
+    alpha_builder_py(qfactors_factors::qlib_alpha158(), input_alias, alphas)
+}
+
+fn alpha_builder_py(
+    all: Vec<(String, Expr)>,
+    input_alias: HashMap<String, String>,
+    alphas: Option<Vec<String>>,
+) -> PyResult<Vec<PyExpr>> {
     let input_alias: BTreeMap<String, String> = input_alias.into_iter().collect();
     let selected = match alphas {
         Some(names) => {
-            let mut by_name = qfactors_factors::worldquant_alpha101()
-                .into_iter()
-                .collect::<HashMap<_, _>>();
+            let mut by_name = all.into_iter().collect::<HashMap<_, _>>();
             names
                 .into_iter()
                 .map(|name| {
@@ -111,7 +125,7 @@ fn worldquant_alpha101_py(
                 .collect::<qfactors_core::Result<Vec<_>>>()
                 .map_err(to_py_err)?
         }
-        None => qfactors_factors::worldquant_alpha101(),
+        None => all,
     };
 
     Ok(selected
@@ -157,6 +171,7 @@ fn qfactors(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(compute_alphas_py, module)?)?;
     module.add_function(wrap_pyfunction!(with_alphas_py, module)?)?;
     module.add_function(wrap_pyfunction!(worldquant_alpha101_py, module)?)?;
+    module.add_function(wrap_pyfunction!(qlib_alpha158_py, module)?)?;
     Ok(())
 }
 
