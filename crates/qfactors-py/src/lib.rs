@@ -56,8 +56,11 @@ fn compute_alphas_py(
         time_col: time_col.to_string(),
     };
     let alphas = alpha_specs_from_py(py, alphas).map_err(to_py_err)?;
+    let output_path = output_path.map(str::to_owned);
 
-    let result = compute_alphas_core(df.into(), options, alphas, output_path).map_err(to_py_err)?;
+    let result = py
+        .detach(move || compute_alphas_core(df.into(), options, alphas, output_path.as_deref()))
+        .map_err(to_py_err)?;
     match result {
         ComputeResult::Memory(df) => Ok(PyDataFrame(df).into_pyobject(py)?.unbind()),
         ComputeResult::File(summary) => summary_to_py(py, summary),
@@ -84,7 +87,7 @@ fn with_alphas_py(
     };
     let alphas = alpha_specs_from_py(py, alphas).map_err(to_py_err)?;
 
-    with_alphas_core(df.into(), options, alphas)
+    py.detach(move || with_alphas_core(df.into(), options, alphas))
         .map(PyDataFrame)
         .map_err(to_py_err)
 }

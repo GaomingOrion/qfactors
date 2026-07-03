@@ -1,4 +1,6 @@
 import math
+import threading
+import time
 
 import numpy as np
 import polars as pl
@@ -162,6 +164,44 @@ def test_compute_alphas_file_mode_matches_memory(tmp_path):
         "n_rows": memory.height,
     }
     assert file_out.equals(memory)
+
+
+def test_compute_alphas_releases_gil_while_running():
+    df = _worldquant_input_frame(n_times=2500)
+    alphas = qfactors.worldquant_alpha101({})
+    started = threading.Event()
+    done = threading.Event()
+    errors = []
+
+    def worker():
+        try:
+            started.set()
+            _compute_alphas(df, alphas=alphas)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+
+    assert started.wait(timeout=2.0)
+    if done.wait(timeout=0.01):
+        thread.join()
+        if errors:
+            raise errors[0]
+        pytest.fail("compute_alphas finished before the GIL smoke test could observe it")
+
+    deadline = time.perf_counter() + 0.05
+    ticks = 0
+    while time.perf_counter() < deadline:
+        ticks += 1
+    assert ticks > 0
+
+    thread.join(timeout=30.0)
+    assert not thread.is_alive()
+    if errors:
+        raise errors[0]
 
 
 def test_with_alphas_mixes_custom_and_worldquant_exprs_in_original_order():
