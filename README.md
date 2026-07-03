@@ -42,13 +42,11 @@ stable — a frozen golden baseline guards every change at `1e-8` tolerance.
   as plain expression builders.
 - v0.3.0 Python expression API: `PyExpr`, `with_alphas`, full-history
   `compute_alphas`, input replacement templates, and type stubs.
-
-**Experimental**
-
-- DAG evaluator (`QF_ENGINE=dag`) with hash-consed common
-  subexpression elimination and slot-reuse. It is gated behind a flag and
-  benchmarked against the default tree engine; an optimization is promoted only
-  when it demonstrably beats the current default.
+- DAG evaluator — hash-consed common-subexpression elimination, slot reuse,
+  node-level parallelism, and fused elementwise chains — promoted to the default
+  engine after benchmarking faster than the tree evaluator across WorldQuant 101
+  and Alpha158. The tree evaluator remains available (`QF_ENGINE=tree`) as an
+  independent reference.
 
 **Planned**
 
@@ -151,15 +149,15 @@ Memory note:
 
 ## Alpha Engine
 
-`compute_alphas` uses the tree evaluator by default. An experimental DAG
-evaluator can be selected for local benchmarking:
+`compute_alphas` uses the DAG evaluator by default. The tree evaluator can be
+selected explicitly — it serves as an independent reference implementation:
 
 ```bash
-QF_ENGINE=dag uv run pytest
+QF_ENGINE=tree uv run pytest
 ```
 
-Valid values are `tree` and `dag`; invalid values raise an error. The tree
-engine remains the default until the DAG path is fully benchmarked and promoted.
+Valid values are `dag` and `tree`; invalid values raise an error. Both engines
+are held to the same golden baseline at `1e-8` tolerance.
 
 ## Factor Libraries
 

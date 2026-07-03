@@ -78,7 +78,7 @@ fn alpha_engine() -> Result<AlphaEngine> {
         Ok(value) if value == "dag" => Ok(AlphaEngine::Dag),
         Ok(value) if value == "tree" => Ok(AlphaEngine::Tree),
         Ok(value) => Err(QFactorsError::InvalidAlphaEngine(value)),
-        Err(env::VarError::NotPresent) => Ok(AlphaEngine::Tree),
+        Err(env::VarError::NotPresent) => Ok(AlphaEngine::Dag),
         Err(env::VarError::NotUnicode(value)) => Err(QFactorsError::InvalidAlphaEngine(
             value.to_string_lossy().into_owned(),
         )),
