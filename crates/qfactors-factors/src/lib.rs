@@ -264,6 +264,44 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    fn synthetic_alpha158_benchmark() -> qfactors_core::Result<()> {
+        // Alpha158 counterpart to `synthetic_alpha_benchmark`: this set leans on
+        // rolling quantiles (QTLU/QTLD) and ts_argmin/argmax (IMAX/IMIN) over long
+        // windows, so it is the load that exercises those kernels — the WQ101 set
+        // does not. Same env knobs and A/B protocol.
+        let n_symbols = bench_env_usize("QFACTORS_BENCH_SYMBOLS", 200);
+        let n_times = bench_env_usize("QFACTORS_BENCH_TIMES", 260);
+        let repeats = bench_env_usize("QFACTORS_BENCH_REPEATS", 3);
+        let df = synthetic_alpha_bench_frame(n_symbols, n_times)?;
+        let mut alphas = qlib_alpha158();
+        alphas.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+
+        println!(
+            "manual run: QFACTORS_BENCH_SYMBOLS={n_symbols} QFACTORS_BENCH_TIMES={n_times} \
+             QFACTORS_BENCH_REPEATS={repeats} cargo test -p qfactors-factors \
+             synthetic_alpha158_benchmark -- --ignored --nocapture"
+        );
+
+        let started = Instant::now();
+        let mut total_rows = 0usize;
+        for _ in 0..repeats {
+            let out = memory_frame(compute_alphas(df.clone(), options(), alphas.clone(), None)?)?;
+            total_rows += out.height();
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "compute_alphas alpha158: symbols={n_symbols} times={n_times} \
+             alphas={} repeats={repeats} rows={total_rows} elapsed={elapsed:?} \
+             per_run={:?}",
+            alphas.len(),
+            elapsed / repeats as u32
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn all_alphas_golden_matches_frozen_baseline() -> qfactors_core::Result<()> {
         // Phase 0 safety net: every registered alpha computed on a fixed deterministic
         // panel must stay numerically stable across the 0.2.x optimization phases.
