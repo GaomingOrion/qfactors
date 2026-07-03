@@ -236,7 +236,8 @@ mod tests {
         let n_times = bench_env_usize("QFACTORS_BENCH_TIMES", 260);
         let repeats = bench_env_usize("QFACTORS_BENCH_REPEATS", 3);
         let df = synthetic_alpha_bench_frame(n_symbols, n_times)?;
-        let alpha_names = worldquant_alpha_names_sorted();
+        let mut alphas = worldquant_alpha101();
+        alphas.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
 
         println!(
             "manual run: QFACTORS_BENCH_SYMBOLS={n_symbols} QFACTORS_BENCH_TIMES={n_times} \
@@ -247,13 +248,7 @@ mod tests {
         let started = Instant::now();
         let mut total_rows = 0usize;
         for _ in 0..repeats {
-            let out = memory_frame(compute_alpha_names(
-                df.clone(),
-                options(),
-                alpha_names.clone(),
-                Series::new("time".into(), (1..=n_times as i64).collect::<Vec<_>>()),
-                None,
-            )?)?;
+            let out = memory_frame(compute_alphas(df.clone(), options(), alphas.clone(), None)?)?;
             total_rows += out.height();
         }
         let elapsed = started.elapsed();
@@ -261,7 +256,7 @@ mod tests {
             "compute_alphas synthetic: symbols={n_symbols} times={n_times} \
              alphas={} repeats={repeats} rows={total_rows} elapsed={elapsed:?} \
              per_run={:?}",
-            alpha_names.len(),
+            alphas.len(),
             elapsed / repeats as u32
         );
 
