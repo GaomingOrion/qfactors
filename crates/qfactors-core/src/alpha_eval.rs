@@ -26,6 +26,19 @@ fn owned_cells<'cs>(values: Vec<f64>, layout: Layout) -> Val<'cs> {
     }
 }
 
+/// Map an elementwise op over cells, reusing the buffer in place when it is owned
+/// (an intermediate temporary) and only allocating when it is a borrowed field.
+fn map_cells<'cs>(values: Cow<'cs, [f64]>, layout: Layout, op: impl Fn(f64) -> f64) -> Val<'cs> {
+    let values = match values {
+        Cow::Owned(mut values) => {
+            values.iter_mut().for_each(|value| *value = op(*value));
+            values
+        }
+        Cow::Borrowed(values) => values.iter().map(|value| op(*value)).collect(),
+    };
+    owned_cells(values, layout)
+}
+
 pub fn eval<'cs>(expr: &Expr, cs: &'cs CellSet) -> Result<Val<'cs>> {
     match expr {
         Expr::Field(name) => cs
@@ -43,10 +56,7 @@ pub fn eval<'cs>(expr: &Expr, cs: &'cs CellSet) -> Result<Val<'cs>> {
         Expr::Div(lhs, rhs) => eval_binary(lhs, rhs, cs, |a, b| a / b),
         Expr::Neg(inner) => match eval(inner, cs)? {
             Val::Scalar(value) => Ok(Val::Scalar(-value)),
-            Val::Cells { values, layout } => Ok(owned_cells(
-                values.iter().map(|value| -*value).collect(),
-                layout,
-            )),
+            Val::Cells { values, layout } => Ok(map_cells(values, layout, |value| -value)),
         },
         Expr::Delay(inner, days) => {
             let values = to_cells(eval(inner, cs)?, Layout::Nt, cs);
@@ -193,14 +203,12 @@ fn eval_binary<'cs>(
     let rhs = eval(rhs, cs)?;
     match (lhs, rhs) {
         (Val::Scalar(lhs), Val::Scalar(rhs)) => Ok(Val::Scalar(op(lhs, rhs))),
-        (Val::Cells { values, layout }, Val::Scalar(rhs)) => Ok(owned_cells(
-            values.iter().map(|lhs| op(*lhs, rhs)).collect(),
-            layout,
-        )),
-        (Val::Scalar(lhs), Val::Cells { values, layout }) => Ok(owned_cells(
-            values.iter().map(|rhs| op(lhs, *rhs)).collect(),
-            layout,
-        )),
+        (Val::Cells { values, layout }, Val::Scalar(rhs)) => {
+            Ok(map_cells(values, layout, |lhs| op(lhs, rhs)))
+        }
+        (Val::Scalar(lhs), Val::Cells { values, layout }) => {
+            Ok(map_cells(values, layout, |rhs| op(lhs, rhs)))
+        }
         (
             Val::Cells {
                 values: lhs,
@@ -237,10 +245,7 @@ fn eval_binary<'cs>(
 fn eval_unary<'cs>(inner: &Expr, cs: &'cs CellSet, op: impl Fn(f64) -> f64) -> Result<Val<'cs>> {
     match eval(inner, cs)? {
         Val::Scalar(value) => Ok(Val::Scalar(op(value))),
-        Val::Cells { values, layout } => Ok(owned_cells(
-            values.iter().map(|value| op(*value)).collect(),
-            layout,
-        )),
+        Val::Cells { values, layout } => Ok(map_cells(values, layout, op)),
     }
 }
 
