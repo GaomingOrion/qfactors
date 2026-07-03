@@ -46,6 +46,22 @@ class PyExpr:
     def __eq__(self, other: object) -> PyExpr: ...  # type: ignore[override]
 
 
+class EvalResult:
+    @property
+    def summary(self) -> pl.DataFrame: ...
+    @property
+    def ic(self) -> pl.DataFrame | pl.LazyFrame: ...
+    @property
+    def quantile_returns(self) -> pl.DataFrame | pl.LazyFrame: ...
+    @property
+    def coverage(self) -> pl.DataFrame | pl.LazyFrame: ...
+    @property
+    def ic_monthly(self) -> pl.DataFrame | None: ...
+    @property
+    def meta(self) -> dict[str, Any]: ...
+    def save(self, dir: str) -> None: ...
+
+
 def roundtrip(df: pl.DataFrame) -> pl.DataFrame: ...
 
 
@@ -77,6 +93,22 @@ def with_labels(
     tradable_col: str | None = None,
     calendar: pl.Series | None = None,
 ) -> pl.DataFrame: ...
+
+
+def evaluate(
+    df: pl.DataFrame,
+    symbol_col: str,
+    time_col: str,
+    factor_cols: Sequence[str],
+    label_cols: Sequence[str] | None = None,
+    quantiles: int = 10,
+    binning: str = "daily",
+    group_col: str | None = None,
+    tradable_col: str | None = None,
+    demean: str = "none",
+    min_cs_count: int = 30,
+    output_dir: str | None = None,
+) -> EvalResult: ...
 
 
 def col(name: str) -> PyExpr: ...

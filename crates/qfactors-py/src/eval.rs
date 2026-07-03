@@ -1,0 +1,164 @@
+use pyo3::exceptions::PyValueError;
+use pyo3::prelude::*;
+use pyo3_polars::PyDataFrame;
+use qfactors_core::PanelOptions;
+use qfactors_eval::{
+    Binning, Demean, EvalOutput, EvaluateOptions, TableData, evaluate as evaluate_core, save_output,
+};
+
+/// Result object for `evaluate`: Polars tables plus the parameter snapshot.
+///
+/// In memory mode every table is a `polars.DataFrame`; with `output_dir` set,
+/// the large tables (`ic`, `quantile_returns`, `coverage`) are returned as
+/// `polars.LazyFrame` scans over the streamed parquet files.
+#[pyclass(name = "EvalResult", frozen)]
+pub struct PyEvalResult {
+    output: EvalOutput,
+}
+
+#[pymethods]
+impl PyEvalResult {
+    /// One row per (factor, horizon): IC/RankIC statistics, top-bottom spread,
+    /// monotonicity, and coverage.
+    #[getter]
+    fn summary(&self) -> PyDataFrame {
+        PyDataFrame(self.output.summary.clone())
+    }
+
+    /// Daily IC and RankIC: date, factor, horizon, ic, rank_ic.
+    #[getter]
+    fn ic(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        table_to_py(py, &self.output.ic)
+    }
+
+    /// Daily per-bucket rows: date, factor, bin, bin_lo, bin_hi, count,
+    /// mean_ret_{h}...
+    #[getter]
+    fn quantile_returns(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        table_to_py(py, &self.output.quantile_returns)
+    }
+
+    /// Daily sample accounting per factor: date, factor, n_valid, n_masked.
+    #[getter]
+    fn coverage(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        table_to_py(py, &self.output.coverage)
+    }
+
+    /// Monthly IC means (only when the time column is Date/Datetime).
+    #[getter]
+    fn ic_monthly(&self) -> Option<PyDataFrame> {
+        self.output.ic_monthly.clone().map(PyDataFrame)
+    }
+
+    /// Snapshot of every evaluation parameter, as a dict.
+    #[getter]
+    fn meta(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let json = py.import("json")?;
+        Ok(json
+            .call_method1("loads", (self.output.meta_json.as_str(),))?
+            .unbind())
+    }
+
+    /// Write all tables plus meta.json to `dir` (memory mode only; streamed
+    /// results already live in their output_dir).
+    fn save(&self, py: Python<'_>, dir: &str) -> PyResult<()> {
+        py.detach(|| save_output(&self.output, dir))
+            .map_err(|err| PyValueError::new_err(err.to_string()))
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "EvalResult(summary_rows={}, mode={})",
+            self.output.summary.height(),
+            match self.output.ic {
+                TableData::Memory(_) => "memory",
+                TableData::File(_) => "streamed",
+            },
+        )
+    }
+}
+
+fn table_to_py(py: Python<'_>, table: &TableData) -> PyResult<Py<PyAny>> {
+    match table {
+        TableData::Memory(df) => Ok(PyDataFrame(df.clone()).into_pyobject(py)?.unbind()),
+        TableData::File(path) => {
+            let polars = py.import("polars")?;
+            Ok(polars
+                .call_method1("scan_parquet", (path.as_str(),))?
+                .unbind())
+        }
+    }
+}
+
+/// Evaluate factor columns against `ret_{h}` label columns on a single panel
+/// DataFrame (see `with_alphas` / `with_labels` for producing the inputs).
+#[pyfunction(name = "evaluate", signature = (
+    df,
+    symbol_col,
+    time_col,
+    factor_cols,
+    label_cols = None,
+    quantiles = 10,
+    binning = "daily",
+    group_col = None,
+    tradable_col = None,
+    demean = "none",
+    min_cs_count = 30,
+    output_dir = None
+))]
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_py(
+    py: Python<'_>,
+    df: PyDataFrame,
+    symbol_col: &str,
+    time_col: &str,
+    factor_cols: Vec<String>,
+    label_cols: Option<Vec<String>>,
+    quantiles: usize,
+    binning: &str,
+    group_col: Option<String>,
+    tradable_col: Option<String>,
+    demean: &str,
+    min_cs_count: usize,
+    output_dir: Option<String>,
+) -> PyResult<PyEvalResult> {
+    let panel = PanelOptions {
+        symbol_col: symbol_col.to_string(),
+        time_col: time_col.to_string(),
+    };
+    let binning = match binning {
+        "daily" => Binning::Daily,
+        "global" => Binning::Global,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "binning must be \"daily\" or \"global\"; got {other:?}"
+            )));
+        }
+    };
+    let demean = match demean {
+        "none" => Demean::None,
+        "universe" => Demean::Universe,
+        "group" => Demean::Group,
+        other => {
+            return Err(PyValueError::new_err(format!(
+                "demean must be \"none\", \"universe\", or \"group\"; got {other:?}"
+            )));
+        }
+    };
+    let options = EvaluateOptions {
+        factor_cols,
+        label_cols,
+        quantiles,
+        binning,
+        demean,
+        min_cs_count,
+        group_col,
+        tradable_col,
+        output_dir,
+    };
+
+    let output = py
+        .detach(move || evaluate_core(&df.into(), &panel, &options))
+        .map_err(|err| PyValueError::new_err(err.to_string()))?;
+    Ok(PyEvalResult { output })
+}

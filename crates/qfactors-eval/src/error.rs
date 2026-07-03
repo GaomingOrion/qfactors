@@ -28,9 +28,33 @@ pub enum EvalError {
     #[error("output column `{0}` already exists in the input DataFrame")]
     OutputColumnConflict(String),
 
+    #[error("demean=\"group\" requires group_col")]
+    GroupColumnRequired,
+
+    #[error("null values are not allowed in group column `{0}`")]
+    GroupNull(String),
+
+    #[error("no label columns found: pass label_cols or add `ret_{{h}}` columns (see with_labels)")]
+    NoLabelColumns,
+
+    #[error("label column `{0}` must be named `ret_{{h}}` with an integer horizon")]
+    BadLabelColumn(String),
+
+    #[error("factor_cols must be non-empty and unique; `{0}` is invalid")]
+    BadFactorColumns(String),
+
+    #[error("quantiles must be at least 2; got {0}")]
+    InvalidQuantiles(usize),
+
+    #[error("result tables were streamed to `{0}`; save() is only available in memory mode")]
+    AlreadySaved(String),
+
     #[error(transparent)]
     Core(#[from] QFactorsError),
 
     #[error("Polars error: {0}")]
     Polars(#[from] PolarsError),
+
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 }

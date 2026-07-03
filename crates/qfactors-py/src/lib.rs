@@ -11,6 +11,7 @@ use qfactors_core::{
 };
 use qfactors_eval::{EvalError, LabelOptions, with_labels as with_labels_core};
 
+mod eval;
 mod expr;
 use expr::PyExpr;
 
@@ -252,6 +253,8 @@ fn qfactors(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(compute_alphas_py, module)?)?;
     module.add_function(wrap_pyfunction!(with_alphas_py, module)?)?;
     module.add_function(wrap_pyfunction!(with_labels_py, module)?)?;
+    module.add_class::<eval::PyEvalResult>()?;
+    module.add_function(wrap_pyfunction!(eval::evaluate_py, module)?)?;
     module.add_function(wrap_pyfunction!(worldquant_alpha101_py, module)?)?;
     module.add_function(wrap_pyfunction!(qlib_alpha158_py, module)?)?;
     Ok(())
