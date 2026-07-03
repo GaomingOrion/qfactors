@@ -51,10 +51,18 @@ pub fn build_cellset(
     // TN (time, symbol) ordering via polars' typed, multi-threaded sort instead of a
     // single-threaded `AnyValue` comparison sort. The row-index column, read back in the
     // sorted order, is exactly the NT->TN permutation.
-    let tn_sorted = sorted.with_row_index(NT_INDEX.into(), None)?.sort(
-        [&options.time_col, &options.symbol_col],
-        SortMultipleOptions::default(),
-    )?;
+    let tn_sorted = sorted
+        .with_row_index(NT_INDEX.into(), None)?
+        .select([
+            options.time_col.as_str(),
+            options.symbol_col.as_str(),
+            NT_INDEX,
+            ORIG_INDEX,
+        ])?
+        .sort(
+            [&options.time_col, &options.symbol_col],
+            SortMultipleOptions::default(),
+        )?;
     let tn_order = tn_sorted
         .column(NT_INDEX)?
         .as_materialized_series()
@@ -186,11 +194,17 @@ fn sym_blocks(sorted: &DataFrame, options: &PanelOptions) -> Result<Vec<Range<us
 
     let mut blocks = Vec::new();
     let mut start = 0usize;
-    for row in 1..n_cells {
-        if symbol_changed.get(row).unwrap_or(true) {
+    for (row, (symbol_changed, time_changed)) in symbol_changed
+        .iter()
+        .map(|changed| changed.unwrap_or(true))
+        .zip(time_changed.iter().map(|changed| changed.unwrap_or(true)))
+        .enumerate()
+        .skip(1)
+    {
+        if symbol_changed {
             blocks.push(start..row);
             start = row;
-        } else if !time_changed.get(row).unwrap_or(true) {
+        } else if !time_changed {
             return Err(QFactorsError::DuplicateSymbolTime {
                 symbol_col: options.symbol_col.clone(),
                 time_col: options.time_col.clone(),
@@ -214,8 +228,13 @@ fn time_blocks(times_tn: &Column) -> Result<TimeBlocks> {
     let mut blocks = Vec::new();
     let mut by_value = HashMap::new();
     let mut start = 0usize;
-    for row in 1..n_cells {
-        if changed.get(row).unwrap_or(true) {
+    for (row, changed) in changed
+        .iter()
+        .map(|changed| changed.unwrap_or(true))
+        .enumerate()
+        .skip(1)
+    {
+        if changed {
             by_value.insert(times_tn.get(start)?.into_static(), blocks.len());
             blocks.push(start..row);
             start = row;
