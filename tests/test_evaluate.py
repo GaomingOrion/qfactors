@@ -561,3 +561,54 @@ def test_alpha101_end_to_end():
     assert result.summary.get_column("factor").n_unique() == 101
     # At least some alphas produce usable ICs on this synthetic panel.
     assert result.summary.filter(pl.col("n_days") > 0).height > 0
+
+
+def test_factor_source_matches_in_frame(tmp_path):
+    # compute_alphas writes a factor panel; evaluate reads factors from it
+    # instead of from the (label-only) frame.
+    df = make_panel(71, nan_rate=0.0)
+    alpha_out = tmp_path / "alphas.parquet"
+    qfactors.compute_alphas(
+        df.select(["asset", "time", "f1", "f2"]).rename({"f1": "close", "f2": "open"}),
+        symbol_col="asset",
+        time_col="time",
+        alphas=[
+            qfactors.col("close").alias("a1"),
+            (qfactors.col("close") - qfactors.col("open")).alias("a2"),
+        ],
+        output_path=str(alpha_out),
+    )
+
+    # Build the same factor columns in-frame for the baseline.
+    in_frame_df = df.with_columns(
+        pl.col("f1").alias("a1"),
+        (pl.col("f1") - pl.col("f2")).alias("a2"),
+    )
+    baseline = run_evaluate(in_frame_df, ["a1", "a2"], quantiles=4, min_cs_count=4)
+
+    labels_only = df.drop(["f1", "f2"])
+    sourced = qfactors.evaluate(
+        labels_only,
+        symbol_col="asset",
+        time_col="time",
+        factor_cols=["a1", "a2"],
+        quantiles=4,
+        min_cs_count=4,
+        factor_source=str(alpha_out),
+    )
+
+    assert sourced.summary.equals(baseline.summary)
+    assert sourced.quantile_returns.equals(baseline.quantile_returns)
+    assert sourced.meta["factor_source"] == str(alpha_out)
+
+    # A mismatched panel is rejected.
+    with pytest.raises(ValueError, match="does not match"):
+        qfactors.evaluate(
+            labels_only.head(labels_only.height - 4),
+            symbol_col="asset",
+            time_col="time",
+            factor_cols=["a1"],
+            quantiles=4,
+            min_cs_count=4,
+            factor_source=str(alpha_out),
+        )

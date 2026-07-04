@@ -49,6 +49,9 @@ pub enum EvalError {
     #[error("result tables were streamed to `{0}`; save() is only available in memory mode")]
     AlreadySaved(String),
 
+    #[error("factor_source panel does not match the DataFrame's (symbol, time) panel")]
+    FactorSourcePanelMismatch,
+
     #[error(transparent)]
     Core(#[from] QFactorsError),
 

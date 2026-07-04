@@ -10,6 +10,7 @@ use crate::context::{
     Binning, Demean, EvalContext, EvalSpec, Weighting, gather_f64_tn, parse_ret_horizon,
 };
 use crate::error::{EvalError, Result};
+use crate::factor_source::{FactorSource, validate_source_factor_cols};
 use crate::flows::{FlowsOutput, eval_factor_flows};
 use crate::metrics::{FactorOutput, eval_factor_with, global_bins};
 use crate::panel::build_time_index;
@@ -31,6 +32,10 @@ pub struct EvaluateOptions {
     pub tradable_col: Option<String>,
     pub cost_bps: f64,
     pub weighting: Weighting,
+    /// Read factor columns from this parquet panel instead of from `df` (must
+    /// cover the same (symbol, time) panel). Lets thousand-factor runs skip
+    /// materializing the full wide input frame.
+    pub factor_source: Option<String>,
     pub output_dir: Option<String>,
 }
 
@@ -64,7 +69,16 @@ pub fn evaluate(
         return Err(EvalError::InvalidQuantiles(opts.quantiles));
     }
     let label_pairs = resolve_label_pairs(df, opts)?;
-    validate_factor_cols(df, opts, &label_pairs)?;
+    let factor_source = match &opts.factor_source {
+        None => {
+            validate_factor_cols(df, opts, &label_pairs)?;
+            None
+        }
+        Some(path) => {
+            validate_source_factor_cols(&opts.factor_cols, &label_pairs)?;
+            Some(FactorSource::open(path, panel, df, &opts.factor_cols)?)
+        }
+    };
 
     let ti = build_time_index(df, panel)?;
     let ctx = EvalContext::build(
@@ -126,10 +140,13 @@ pub fn evaluate(
     let mut autocorr = AutocorrColumns::default();
 
     for batch in opts.factor_cols.chunks(FACTOR_BATCH) {
-        let factors: Vec<Vec<f64>> = batch
-            .par_iter()
-            .map(|name| gather_f64_tn(df, name, &ti.orig_index_tn))
-            .collect::<Result<_>>()?;
+        let factors: Vec<Vec<f64>> = match &factor_source {
+            Some(source) => source.read_batch(batch)?,
+            None => batch
+                .par_iter()
+                .map(|name| gather_f64_tn(df, name, &ti.orig_index_tn))
+                .collect::<Result<_>>()?,
+        };
         let outputs: Vec<(FactorOutput, FlowsOutput)> = factors
             .par_iter()
             .map(|factor| {
@@ -752,7 +769,7 @@ fn meta_json(
             "\"demean\":\"{}\",\"min_cs_count\":{},\"cost_bps\":{},\"weighting\":\"{}\",",
             "\"horizons\":[{}],\"label_cols\":[{}],",
             "\"factor_count\":{},\"group_col\":{},\"tradable_col\":{},\"n_days\":{},",
-            "\"n_rows\":{},\"output_dir\":{}}}"
+            "\"n_rows\":{},\"factor_source\":{},\"output_dir\":{}}}"
         ),
         json_string(&panel.symbol_col),
         json_string(&panel.time_col),
@@ -772,6 +789,7 @@ fn meta_json(
         json_option(opts.tradable_col.as_deref()),
         n_days,
         n_rows,
+        json_option(opts.factor_source.as_deref()),
         json_option(opts.output_dir.as_deref()),
     )
 }
@@ -824,6 +842,7 @@ mod tests {
             tradable_col: None,
             cost_bps: 0.0,
             weighting: Weighting::Factor,
+            factor_source: None,
             output_dir: None,
         }
     }
@@ -902,6 +921,47 @@ mod tests {
         assert!(matches!(err, EvalError::AlreadySaved(_)));
 
         std::fs::remove_dir_all(&dir).ok();
+        Ok(())
+    }
+
+    #[test]
+    fn evaluate_factor_source_matches_in_frame() -> Result<()> {
+        let df = sample_df();
+        // Write the factor as a separate parquet panel, deliberately unsorted,
+        // and drop it from the frame passed to evaluate.
+        let mut factor_panel = df!(
+            "time" => [2i64, 1, 1, 2, 1, 2, 1, 2],
+            "asset" => ["D", "C", "A", "A", "B", "B", "D", "C"],
+            "f1" => [1.0, 3.0, 1.0, 4.0, 2.0, 3.0, 4.0, 2.0],
+        )?;
+        let path = std::env::temp_dir().join(format!(
+            "qfactors-eval-source-{}.parquet",
+            std::process::id()
+        ));
+        ParquetWriter::new(std::fs::File::create(&path)?).finish(&mut factor_panel)?;
+        let path_string = path.to_string_lossy().into_owned();
+
+        let in_frame = evaluate(&df, &panel(), &options(vec!["f1".to_string()]))?;
+        let df_without_factor = df.drop("f1")?;
+        let mut source_opts = options(vec!["f1".to_string()]);
+        source_opts.factor_source = Some(path_string);
+        let from_source = evaluate(&df_without_factor, &panel(), &source_opts)?;
+
+        assert!(from_source.summary.equals_missing(&in_frame.summary));
+        let (TableData::Memory(a), TableData::Memory(b)) =
+            (&from_source.quantile_returns, &in_frame.quantile_returns)
+        else {
+            panic!("expected memory tables");
+        };
+        assert!(a.equals_missing(b));
+
+        // A mismatched panel is rejected.
+        let wrong_panel = df_without_factor.slice(0, 4);
+        source_opts.factor_source = Some(path.to_string_lossy().into_owned());
+        let err = evaluate(&wrong_panel, &panel(), &source_opts).unwrap_err();
+        assert!(matches!(err, EvalError::FactorSourcePanelMismatch));
+
+        std::fs::remove_file(&path).ok();
         Ok(())
     }
 

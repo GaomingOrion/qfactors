@@ -127,6 +127,7 @@ fn table_to_py(py: Python<'_>, table: &TableData) -> PyResult<Py<PyAny>> {
     min_cs_count = 30,
     cost_bps = 0.0,
     weighting = "factor",
+    factor_source = None,
     output_dir = None
 ))]
 #[allow(clippy::too_many_arguments)]
@@ -145,6 +146,7 @@ pub fn evaluate_py(
     min_cs_count: usize,
     cost_bps: f64,
     weighting: &str,
+    factor_source: Option<String>,
     output_dir: Option<String>,
 ) -> PyResult<PyEvalResult> {
     let panel = PanelOptions {
@@ -190,6 +192,7 @@ pub fn evaluate_py(
         tradable_col,
         cost_bps,
         weighting,
+        factor_source,
         output_dir,
     };
 

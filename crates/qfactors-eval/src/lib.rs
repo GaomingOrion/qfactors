@@ -2,6 +2,7 @@ pub mod context;
 pub mod correlation;
 pub mod error;
 pub mod evaluate;
+pub(crate) mod factor_source;
 pub mod flows;
 pub mod labels;
 pub mod metrics;

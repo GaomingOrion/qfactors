@@ -115,6 +115,7 @@ def evaluate(
     min_cs_count: int = 30,
     cost_bps: float = 0.0,
     weighting: str = "factor",
+    factor_source: str | None = None,
     output_dir: str | None = None,
 ) -> EvalResult: ...
 
