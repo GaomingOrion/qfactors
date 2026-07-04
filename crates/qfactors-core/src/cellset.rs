@@ -45,7 +45,20 @@ pub fn build_cellset(
     validate_fields(df, options, fields)?;
 
     let indexed = df.with_row_index(ORIG_INDEX.into(), None)?;
-    let sorted = sort_panel(&indexed, options)?;
+    // Only the structural columns, the row index, and the requested field columns
+    // are ever read back from `sorted`. Projecting before the sort keeps it from
+    // gathering a full-width copy of every (possibly hundreds of) unrelated column.
+    let mut projection: Vec<&str> = Vec::with_capacity(fields.len() + 3);
+    projection.push(&options.symbol_col);
+    projection.push(&options.time_col);
+    projection.push(ORIG_INDEX);
+    for field in fields {
+        if field != &options.symbol_col && field != &options.time_col {
+            projection.push(field);
+        }
+    }
+    let narrow = indexed.select(projection)?;
+    let sorted = sort_panel(&narrow, options)?;
     let sym_blocks = sym_blocks(&sorted, options)?;
 
     // TN (time, symbol) ordering via polars' typed, multi-threaded sort instead of a
