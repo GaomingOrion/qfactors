@@ -50,6 +50,11 @@ Benchmark dimensions can be adjusted with:
 
 To compare alpha engines locally, set `QF_ENGINE=tree` or `QF_ENGINE=dag`.
 
+### Cross-engine factor benchmarks
+
+See [benchmarks](benchmark.md) for cross-engine benchmark commands and recorded
+results against Qlib Alpha158 and KunQuant WorldQuant101.
+
 ## Golden Fixtures
 
 The checked-in Parquet fixture for all-alphas regression coverage is synthetic.

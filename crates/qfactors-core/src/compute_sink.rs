@@ -127,6 +127,7 @@ impl FileSink {
 #[cfg(test)]
 mod tests {
     use std::fs::File;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
 
@@ -151,10 +152,13 @@ mod tests {
 
     #[test]
     fn file_sink_writes_parquet_batches() -> Result<()> {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock is after unix epoch")
+            .as_nanos();
         let path = std::env::temp_dir().join(format!(
-            "qfactors-file-sink-{}-{}.parquet",
+            "qfactors-file-sink-{}-{unique}.parquet",
             std::process::id(),
-            std::thread::current().name().unwrap_or("test")
         ));
         let path_string = path.to_string_lossy().to_string();
         let mut sink = FileSink::new(path_string.clone());

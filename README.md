@@ -207,6 +207,8 @@ See [docs/development.md](docs/development.md) for more detail.
 
 For alpha expression construction and execution details, see
 [docs/expression_api.md](docs/expression_api.md).
+For cross-engine performance comparisons against Qlib Alpha158 and KunQuant
+WorldQuant101, see [docs/benchmark.md](docs/benchmark.md).
 
 ## License
 

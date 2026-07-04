@@ -632,7 +632,7 @@ def test_to_html_report(tmp_path):
 
     path = tmp_path / "report.html"
     result.to_html(str(path))
-    html = path.read_text()
+    html = path.read_text(encoding="utf-8")
 
     assert html.lstrip().lower().startswith("<!doctype html>")
     assert '"f1"' in html and '"f2"' in html
