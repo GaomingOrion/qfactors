@@ -4,6 +4,7 @@ members = [
     "crates/qfactors-eval",
     "crates/qfactors-factors",
     "crates/qfactors-py",
+    "crates/qfactors-server",
 ]
 resolver = "3"
 

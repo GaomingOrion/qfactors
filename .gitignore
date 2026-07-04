@@ -9,3 +9,5 @@ __pycache__/
 docs/plans/*
 !docs/plans/worldquant101_manifest.md
 docs/review/
+frontend/node_modules/
+frontend/dist/

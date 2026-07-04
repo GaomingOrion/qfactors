@@ -225,6 +225,38 @@ mode only; the drill-down bundle is capped at `max_detail_factors` factors (the
 summary table always covers every factor) to bound file size, so sort/filter the
 result to the shortlist you care about first.
 
+### Interactive report (Vue + Axum + ECharts)
+
+For a richer, interactive view, `qfactors-server` serves a saved output dir as a
+JSON API and a Vue single-page app that draws the tearsheets with ECharts
+(tooltips, zoom, legend toggles). v1 covers the Returns tab (mean return by
+quantile, cumulative return by quantile, long-short cumulative net-value with
+drawdown, top−bottom spread) and the IC tab (daily IC/RankIC with a rolling mean,
+IC distribution, monthly IC heatmap).
+
+Build the frontend once, then point the server at any `save()`/`output_dir`:
+
+```powershell
+# one-time: build the SPA (requires Node/npm)
+cd frontend; npm install; npm run build; cd ..
+
+# serve a saved output dir
+cargo run -p qfactors-server -- --dir <output_dir> --assets frontend/dist --open
+```
+
+Or drive it from Python — `serve()` saves an in-memory result to a temp dir and
+launches the same server (build the binary first with
+`cargo build -p qfactors-server`; set `QFACTORS_SERVER_ASSETS=frontend/dist` to
+serve the UI):
+
+```python
+result = qf.evaluate(df, "symbol", "date", factor_cols)
+result.serve(port=8080)  # Ctrl-C to stop
+```
+
+The server is read-only and reads parquet eagerly per factor; use it on a
+filtered shortlist rather than a thousand-factor run.
+
 ## `factor_correlation`
 
 ```python
