@@ -50,18 +50,14 @@ pub fn with_labels(
 
     // Per NT row: its slot on the time grid and its original row index.
     let n = cs.n_cells;
-    let mut block_of_tn = vec![0usize; n];
-    for (block, range) in cs.time_blocks.iter().enumerate() {
-        for tn in range.clone() {
-            block_of_tn[tn] = block;
-        }
-    }
     let mut grid_pos_nt = vec![0usize; n];
     let mut orig_of_nt = vec![0usize; n];
-    for tn in 0..n {
-        let nt = cs.tn_order[tn];
-        grid_pos_nt[nt] = grid_map[block_of_tn[tn]];
-        orig_of_nt[nt] = cs.orig_index_tn[tn];
+    for (block, range) in cs.time_blocks.iter().enumerate() {
+        for tn in range.clone() {
+            let nt = cs.tn_order[tn];
+            grid_pos_nt[nt] = grid_map[block];
+            orig_of_nt[nt] = cs.orig_index_tn[tn];
+        }
     }
 
     let tradable_nt = opts
