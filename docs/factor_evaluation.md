@@ -91,7 +91,7 @@ result = qf.evaluate(
     demean="none",          # "none" | "universe" | "group"
     min_cs_count=30,
     cost_bps=0.0,
-    weighting="factor",     # "factor" | "quantile"
+    weighting="quantile",   # "quantile" (default) | "factor"
     output_dir=None,        # set => stream large tables to parquet
 )
 ```
@@ -181,8 +181,10 @@ Cross-day metrics, computed in a separate sequential pass per factor
 - **Quantile turnover** (`turnover` table): `1 − |top_t ∩ top_{t−h}| / |top_t|`,
   and likewise for the bottom bucket, per horizon.
 - **Long-short portfolio** (`portfolio` table): needs a `ret_1` column. Weights
-  are `weighting="factor"` (default; `(f − mean)/Σ|·|`, gross leverage 1) or
-  `"quantile"` (top +0.5/n, bottom −0.5/n). For h>1, the portfolio is the
+  are `weighting="quantile"` (default; top +0.5/n, bottom −0.5/n, so the LS
+  portfolio matches the rank-IC / spread / monotonicity caliber) or `"factor"`
+  (`(f − mean)/Σ|·|`, gross leverage 1 — a raw-magnitude diagnostic that can
+  diverge in sign from the rank-based metrics). For h>1, the portfolio is the
   average of the last h signal days' weights (the staggered-substrategy caliber
   that alphalens-reloaded dropped — restored here); close-to-close it is
   equivalent to averaging h overlapping substrategies. Turnover =

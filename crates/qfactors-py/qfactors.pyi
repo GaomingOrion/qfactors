@@ -116,7 +116,7 @@ def evaluate(
     demean: str = "none",
     min_cs_count: int = 30,
     cost_bps: float = 0.0,
-    weighting: str = "factor",
+    weighting: str = "quantile",
     factor_source: str | None = None,
     output_dir: str | None = None,
 ) -> EvalResult: ...

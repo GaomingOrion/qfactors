@@ -52,6 +52,7 @@ async function selectFactor(name: string) {
           <option v-for="h in meta.horizons" :key="h" :value="h">{{ h }}</option>
         </select>
       </label>
+      <span class="muted hint">drives the IC distribution &amp; monthly heatmap; other charts show all horizons</span>
     </div>
   </header>
 
@@ -78,8 +79,14 @@ async function selectFactor(name: string) {
           :bundle="bundle"
           :horizon="horizon"
           :horizons="meta?.horizons ?? []"
+          :weighting="meta?.weighting"
         />
-        <ICPanel v-if="tab === 'ic'" :bundle="bundle" :horizon="horizon" />
+        <ICPanel
+          v-if="tab === 'ic'"
+          :bundle="bundle"
+          :horizon="horizon"
+          :horizons="meta?.horizons ?? []"
+        />
       </template>
     </section>
     <p v-else class="muted hint">Select a factor row to open its tearsheet.</p>
@@ -104,6 +111,7 @@ header {
 main {
   padding: 20px 24px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
 }
 .error {

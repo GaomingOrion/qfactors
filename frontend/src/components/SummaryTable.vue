@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { SummaryRow } from "../api";
-import { fmt } from "../lib/series";
+import { fmt, pct } from "../lib/series";
 
 const props = defineProps<{
   rows: SummaryRow[];
@@ -25,6 +25,46 @@ const SIGNED = new Set([
   "ls_net_ann",
   "ls_ir",
 ]);
+
+// Columns displayed as percentages (returns, coverage, turnover, win rates).
+const PERCENT = new Set([
+  "spread_mean",
+  "avg_coverage",
+  "ls_gross_ann",
+  "ls_net_ann",
+  "ls_turnover",
+  "top_turnover",
+  "bottom_turnover",
+  "ic_win_rate",
+  "rank_ic_win_rate",
+]);
+
+// Header tooltips: definitions, units and annualization conventions.
+const DESC: Record<string, string> = {
+  factor: "Factor name.",
+  horizon: "Forward-return horizon h (bars); entry is t+1, exit is t+1+h.",
+  n_days: "Number of valid cross-sectional dates.",
+  ic_mean: "Mean daily Pearson IC (factor vs h-day forward return).",
+  ic_std: "Std of daily Pearson IC.",
+  ic_ir: "IC information ratio = mean(IC)/std(IC). NOT annualized (no √252).",
+  ic_t_nw: "Newey-West t-stat of mean IC (lag = h−1, corrects overlap).",
+  ic_win_rate: "Share of dates with IC > 0.",
+  rank_ic_mean: "Mean daily rank IC (Spearman).",
+  rank_ic_std: "Std of daily rank IC.",
+  rank_ic_ir: "Rank-IC information ratio = mean/std. NOT annualized.",
+  rank_ic_t_nw: "Newey-West t-stat of mean rank IC (lag = h−1).",
+  rank_ic_win_rate: "Share of dates with rank IC > 0.",
+  spread_mean: "Mean top−bottom quantile h-day forward return (not comparable across h).",
+  spread_t_nw: "Newey-West t-stat of the top−bottom spread (lag = h−1).",
+  monotonicity: "Kendall tau of quantile mean returns vs bucket index (1 = perfectly monotone).",
+  avg_coverage: "Mean per-day valid factor coverage = valid samples / cross-section size.",
+  ls_gross_ann: "Annualized gross LS return = daily mean × 252 (quantile-weighted, staggered sleeves, 1-day returns).",
+  ls_net_ann: "Annualized net LS return = gross − turnover × cost_bps/1e4 (net = gross when cost_bps = 0).",
+  ls_ir: "LS information ratio = daily mean/std × √252 (net).",
+  ls_turnover: "One-way weight turnover = 0.5·Σ|Δw| per day.",
+  top_turnover: "Top-bucket membership turnover vs h days ago.",
+  bottom_turnover: "Bottom-bucket membership turnover vs h days ago.",
+};
 
 const filter = ref("");
 const sortKey = ref("rank_ic_ir");
@@ -63,7 +103,9 @@ function cellClass(col: string, v: string | number | null): string {
 
 function display(col: string, v: string | number | null): string {
   if (typeof v !== "number") return v ?? "";
-  return Number.isInteger(v) ? String(v) : fmt(v, 4);
+  if (Number.isInteger(v)) return String(v);
+  if (PERCENT.has(col)) return pct(v, 2);
+  return fmt(v, 4);
 }
 </script>
 
@@ -77,7 +119,7 @@ function display(col: string, v: string | number | null): string {
       <table>
         <thead>
           <tr>
-            <th v-for="c in cols" :key="c" @click="sortBy(c)">
+            <th v-for="c in cols" :key="c" :title="DESC[c] ?? c" @click="sortBy(c)">
               {{ c }}<span v-if="c === sortKey">{{ sortDir < 0 ? " ▼" : " ▲" }}</span>
             </th>
           </tr>

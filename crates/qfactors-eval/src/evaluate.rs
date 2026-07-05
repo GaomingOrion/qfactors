@@ -367,9 +367,58 @@ fn month_keys(dates: &Series) -> Option<Vec<(i32, u32)>> {
                 .map(|ts| ts.div_euclid(per_day))
                 .collect()
         }
+        // Integer/string columns holding a packed `YYYYMMDD` calendar date
+        // (e.g. 20240402) rather than epoch days. Parse the year/month directly;
+        // a value that is not a plausible calendar date yields `None`, which
+        // safely disables the heatmap instead of emitting garbage.
+        DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64 => {
+            return dates
+                .cast(&DataType::Int64)
+                .ok()?
+                .i64()
+                .ok()?
+                .iter()
+                .map(|v| v.and_then(ymd_month_from_packed))
+                .collect();
+        }
+        DataType::String => {
+            return dates
+                .str()
+                .ok()?
+                .iter()
+                .map(|v| v.and_then(ymd_month_from_str))
+                .collect();
+        }
         _ => return None,
     };
     Some(days.into_iter().map(civil_year_month).collect())
+}
+
+/// Year/month from a packed `YYYYMMDD` integer, or `None` when it is not a
+/// plausible calendar date (so non-date integer columns disable the heatmap).
+fn ymd_month_from_packed(v: i64) -> Option<(i32, u32)> {
+    let year = (v / 10_000) as i32;
+    let month = ((v / 100) % 100) as u32;
+    ((1000..=9999).contains(&year) && (1..=12).contains(&month)).then_some((year, month))
+}
+
+/// Year/month from a `YYYYMMDD` or `YYYY-MM-DD` string (any non-digit
+/// separators are ignored); `None` when it is not a plausible calendar date.
+fn ymd_month_from_str(s: &str) -> Option<(i32, u32)> {
+    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 6 {
+        return None;
+    }
+    let year = digits[0..4].parse::<i32>().ok()?;
+    let month = digits[4..6].parse::<u32>().ok()?;
+    ((1000..=9999).contains(&year) && (1..=12).contains(&month)).then_some((year, month))
 }
 
 fn assemble_ic(
@@ -1024,5 +1073,41 @@ mod tests {
             .collect();
         assert_eq!(months, [1, 2]);
         Ok(())
+    }
+
+    #[test]
+    fn evaluate_packed_yyyymmdd_time_produces_monthly_table() -> Result<()> {
+        // A-share style panels often carry the date as a packed YYYYMMDD int/string
+        // rather than a Polars Date; the monthly heatmap must still populate.
+        let df = df!(
+            "asset" => ["A", "B", "C", "A", "B", "C"],
+            "time" => [20240115i64, 20240115, 20240115, 20240220, 20240220, 20240220],
+            "f1" => [1.0, 2.0, 3.0, 3.0, 2.0, 1.0],
+            "ret_1" => [0.01, 0.02, 0.03, 0.03, 0.02, 0.01],
+        )?;
+
+        let mut opts = options(vec!["f1".to_string()]);
+        opts.min_cs_count = 3;
+        opts.quantiles = 3;
+        let out = evaluate(&df, &panel(), &opts)?;
+
+        let monthly = out
+            .ic_monthly
+            .expect("packed YYYYMMDD column yields monthly table");
+        let months: Vec<u32> = monthly.column("month")?.u32()?.into_no_null_iter().collect();
+        assert_eq!(months, [1, 2]);
+        let years: Vec<i32> = monthly.column("year")?.i32()?.into_no_null_iter().collect();
+        assert_eq!(years, [2024, 2024]);
+        Ok(())
+    }
+
+    #[test]
+    fn month_keys_helpers_reject_non_dates() {
+        assert_eq!(ymd_month_from_packed(20240402), Some((2024, 4)));
+        assert_eq!(ymd_month_from_packed(1), None); // plain sequence index
+        assert_eq!(ymd_month_from_packed(20241301), None); // month 13
+        assert_eq!(ymd_month_from_str("2024-04-02"), Some((2024, 4)));
+        assert_eq!(ymd_month_from_str("20240402"), Some((2024, 4)));
+        assert_eq!(ymd_month_from_str("abc"), None);
     }
 }

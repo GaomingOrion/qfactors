@@ -239,7 +239,7 @@ def test_flows_save_and_streaming(tmp_path):
         memory.rank_autocorr
     )
     assert memory.meta["cost_bps"] == 0.0
-    assert memory.meta["weighting"] == "factor"
+    assert memory.meta["weighting"] == "quantile"
 
 
 # ---------------------------------------------------------------------------

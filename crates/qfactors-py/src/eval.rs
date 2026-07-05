@@ -171,7 +171,7 @@ fn table_to_py(py: Python<'_>, table: &TableData) -> PyResult<Py<PyAny>> {
     demean = "none",
     min_cs_count = 30,
     cost_bps = 0.0,
-    weighting = "factor",
+    weighting = "quantile",
     factor_source = None,
     output_dir = None
 ))]
