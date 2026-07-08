@@ -40,22 +40,6 @@ def test_build_ohlcv_panel_has_dense_factor_inputs():
     assert df.select(pl.col("time").n_unique()).item() == 7
 
 
-def test_polars_alpha158_lite_outputs_requested_columns():
-    df = bench.build_ohlcv_panel(4, 8, seed=13)
-    names = ["KMID", "VWAP0", "ROC5", "MA5", "SUMP5"]
-
-    out = bench.run_polars_alpha158_lite(df, names)
-
-    assert out.columns == ["time", "asset", *names]
-    assert out.height == df.height
-    assert out.select(["time", "asset"]).equals(out.select(["time", "asset"]).sort(["time", "asset"]))
-
-
-def test_alpha158_lite_rejects_unimplemented_polars_factor():
-    with pytest.raises(ValueError, match="BETA5"):
-        bench.alpha158_lite_names(["KMID", "BETA5"])
-
-
 def test_panel_to_kunquant_inputs_are_time_stock_matrices():
     df = bench.build_ohlcv_panel(5, 6, seed=17)
 
@@ -86,6 +70,5 @@ def test_qlib_provider_writer_creates_minimal_binary_layout(tmp_path):
 
 
 def test_default_engines_follow_workload():
-    assert bench.default_engines("alpha158-lite") == ["qfactors", "polars", "qlib"]
     assert bench.default_engines("alpha158") == ["qfactors", "qlib"]
     assert bench.default_engines("worldquant101") == ["qfactors", "kunquant"]

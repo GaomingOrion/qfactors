@@ -3,13 +3,13 @@
 Usage:
 
     uv run maturin develop --release
-    uv run python scripts/bench_factor_engines.py --workload alpha158-lite
+    uv run python scripts/bench_factor_engines.py --workload alpha158
     uv run python scripts/bench_factor_engines.py --workload worldquant101 --engines qfactors,kunquant
 
-The default benchmark compares qfactors with a Polars expression baseline and,
-when pyqlib is installed, Qlib Alpha158DL over a generated local provider.
-KunQuant is optional; when the package and a C++ toolchain are available, the
-same CLI runs the package's supported WorldQuant Alpha101 subset.
+The default benchmark compares qfactors with, when pyqlib is installed, Qlib
+Alpha158DL over a generated local provider. KunQuant is optional; when the
+package and a C++ toolchain are available, the same CLI runs the package's
+supported WorldQuant Alpha101 subset.
 """
 
 from __future__ import annotations
@@ -33,39 +33,6 @@ import numpy as np
 import polars as pl
 
 
-EPS = 1e-12
-DEFAULT_ALPHA158_LITE = [
-    "KMID",
-    "KLEN",
-    "KMID2",
-    "KUP",
-    "KUP2",
-    "KLOW",
-    "KLOW2",
-    "KSFT",
-    "KSFT2",
-    "OPEN0",
-    "HIGH0",
-    "LOW0",
-    "VWAP0",
-    "ROC5",
-    "MA5",
-    "STD5",
-    "MAX5",
-    "MIN5",
-    "RSV5",
-    "CNTP5",
-    "CNTN5",
-    "CNTD5",
-    "SUMP5",
-    "SUMN5",
-    "SUMD5",
-    "VMA5",
-    "VSTD5",
-    "VSUMP5",
-    "VSUMN5",
-    "VSUMD5",
-]
 KUNQUANT_WORLDQUANT101 = [
     "alpha1",
     "alpha2",
@@ -224,15 +191,6 @@ def parse_csv(value: str | None) -> list[str] | None:
     return out or None
 
 
-def alpha158_lite_names(names: Iterable[str] | None = None) -> list[str]:
-    selected = list(names) if names else list(DEFAULT_ALPHA158_LITE)
-    known = set(DEFAULT_ALPHA158_LITE)
-    unknown = [name for name in selected if name not in known]
-    if unknown:
-        raise ValueError(f"alpha158-lite Polars baseline does not implement: {', '.join(unknown)}")
-    return selected
-
-
 def worldquant_names(names: Iterable[str] | None = None) -> list[str]:
     selected = list(names) if names else list(DEFAULT_WORLDQUANT101)
     known = {f"alpha{idx}" for idx in range(1, 102)}
@@ -242,130 +200,10 @@ def worldquant_names(names: Iterable[str] | None = None) -> list[str]:
     return selected
 
 
-def _over_asset(expr: pl.Expr) -> pl.Expr:
-    return expr.over("asset")
-
-
-def alpha158_lite_polars_exprs(names: Iterable[str] | None = None) -> list[pl.Expr]:
-    """Build Polars expressions for a Qlib Alpha158-compatible subset."""
-    selected = alpha158_lite_names(names)
-    c = pl.col("close")
-    o = pl.col("open")
-    h = pl.col("high")
-    l = pl.col("low")
-    v = pl.col("volume")
-    vw = pl.col("vwap")
-    d = 5
-
-    delta_close = c - c.shift(1)
-    delta_volume = v - v.shift(1)
-    close_up = pl.when(delta_close > 0.0).then(1.0).otherwise(0.0)
-    close_down = pl.when(delta_close < 0.0).then(1.0).otherwise(0.0)
-    close_pos = pl.when(delta_close > 0.0).then(delta_close).otherwise(0.0)
-    close_neg = pl.when(delta_close < 0.0).then(-delta_close).otherwise(0.0)
-    volume_pos = pl.when(delta_volume > 0.0).then(delta_volume).otherwise(0.0)
-    volume_neg = pl.when(delta_volume < 0.0).then(-delta_volume).otherwise(0.0)
-
-    registry = {
-        "KMID": ((c - o) / o).alias("KMID"),
-        "KLEN": ((h - l) / o).alias("KLEN"),
-        "KMID2": ((c - o) / (h - l + EPS)).alias("KMID2"),
-        "KUP": ((h - pl.max_horizontal(o, c)) / o).alias("KUP"),
-        "KUP2": ((h - pl.max_horizontal(o, c)) / (h - l + EPS)).alias("KUP2"),
-        "KLOW": ((pl.min_horizontal(o, c) - l) / o).alias("KLOW"),
-        "KLOW2": ((pl.min_horizontal(o, c) - l) / (h - l + EPS)).alias("KLOW2"),
-        "KSFT": ((2.0 * c - h - l) / o).alias("KSFT"),
-        "KSFT2": ((2.0 * c - h - l) / (h - l + EPS)).alias("KSFT2"),
-        "OPEN0": (o / c).alias("OPEN0"),
-        "HIGH0": (h / c).alias("HIGH0"),
-        "LOW0": (l / c).alias("LOW0"),
-        "VWAP0": (vw / c).alias("VWAP0"),
-        "ROC5": _over_asset(c.shift(d) / c).alias("ROC5"),
-        "MA5": _over_asset(c.rolling_mean(d, min_samples=d) / c).alias("MA5"),
-        "STD5": _over_asset(c.rolling_std(d, min_samples=d, ddof=1) / c).alias("STD5"),
-        "MAX5": _over_asset(h.rolling_max(d, min_samples=d) / c).alias("MAX5"),
-        "MIN5": _over_asset(l.rolling_min(d, min_samples=d) / c).alias("MIN5"),
-        "RSV5": _over_asset(
-            (c - l.rolling_min(d, min_samples=d))
-            / (h.rolling_max(d, min_samples=d) - l.rolling_min(d, min_samples=d) + EPS)
-        ).alias("RSV5"),
-        "CNTP5": _over_asset(close_up.rolling_mean(d, min_samples=d)).alias("CNTP5"),
-        "CNTN5": _over_asset(close_down.rolling_mean(d, min_samples=d)).alias("CNTN5"),
-        "CNTD5": _over_asset(
-            close_up.rolling_mean(d, min_samples=d) - close_down.rolling_mean(d, min_samples=d)
-        ).alias("CNTD5"),
-        "SUMP5": _over_asset(
-            close_pos.rolling_sum(d, min_samples=d)
-            / (delta_close.abs().rolling_sum(d, min_samples=d) + EPS)
-        ).alias("SUMP5"),
-        "SUMN5": _over_asset(
-            close_neg.rolling_sum(d, min_samples=d)
-            / (delta_close.abs().rolling_sum(d, min_samples=d) + EPS)
-        ).alias("SUMN5"),
-        "SUMD5": _over_asset(
-            (close_pos.rolling_sum(d, min_samples=d) - close_neg.rolling_sum(d, min_samples=d))
-            / (delta_close.abs().rolling_sum(d, min_samples=d) + EPS)
-        ).alias("SUMD5"),
-        "VMA5": _over_asset(v.rolling_mean(d, min_samples=d) / (v + EPS)).alias("VMA5"),
-        "VSTD5": _over_asset(v.rolling_std(d, min_samples=d, ddof=1) / (v + EPS)).alias("VSTD5"),
-        "VSUMP5": _over_asset(
-            volume_pos.rolling_sum(d, min_samples=d)
-            / (delta_volume.abs().rolling_sum(d, min_samples=d) + EPS)
-        ).alias("VSUMP5"),
-        "VSUMN5": _over_asset(
-            volume_neg.rolling_sum(d, min_samples=d)
-            / (delta_volume.abs().rolling_sum(d, min_samples=d) + EPS)
-        ).alias("VSUMN5"),
-        "VSUMD5": _over_asset(
-            (volume_pos.rolling_sum(d, min_samples=d) - volume_neg.rolling_sum(d, min_samples=d))
-            / (delta_volume.abs().rolling_sum(d, min_samples=d) + EPS)
-        ).alias("VSUMD5"),
-    }
-    return [registry[name] for name in selected]
-
-
-def run_polars_alpha158_lite(df: pl.DataFrame, names: Iterable[str] | None = None) -> pl.DataFrame:
-    names = alpha158_lite_names(names)
-    sorted_df = df.sort(["asset", "time"])
-    out = sorted_df.select(["time", "asset", *alpha158_lite_polars_exprs(names)])
-    return out.sort(["time", "asset"])
-
-
 def qlib_alpha158_config(workload: str, names: Iterable[str] | None = None) -> tuple[list[str], list[str]]:
     from qlib.contrib.data.loader import Alpha158DL
 
-    if workload == "alpha158-lite":
-        selected = alpha158_lite_names(names)
-        config = {
-            "kbar": {},
-            "price": {
-                "windows": [0],
-                "feature": ["OPEN", "HIGH", "LOW", "VWAP"],
-            },
-            "rolling": {
-                "windows": [5],
-                "include": [
-                    "ROC",
-                    "MA",
-                    "STD",
-                    "MAX",
-                    "LOW",
-                    "RSV",
-                    "CNTP",
-                    "CNTN",
-                    "CNTD",
-                    "SUMP",
-                    "SUMN",
-                    "SUMD",
-                    "VMA",
-                    "VSTD",
-                    "VSUMP",
-                    "VSUMN",
-                    "VSUMD",
-                ],
-            },
-        }
-    elif workload == "alpha158":
+    if workload == "alpha158":
         selected = list(names) if names else None
         config = {
             "kbar": {},
@@ -458,10 +296,7 @@ def run_qlib_alpha158_prepared(
 
 def run_qfactors(df: pl.DataFrame, workload: str, names: Iterable[str] | None = None) -> pl.DataFrame:
     qfactors = importlib.import_module("qfactors")
-    if workload == "alpha158-lite":
-        selected = alpha158_lite_names(names)
-        alphas = qfactors.qlib_alpha158({}, alphas=selected)
-    elif workload == "alpha158":
+    if workload == "alpha158":
         selected = list(names) if names else None
         alphas = qfactors.qlib_alpha158({}, alphas=selected)
     elif workload == "worldquant101":
@@ -632,8 +467,6 @@ def output_shape(output: object) -> tuple[int | None, int | None]:
 
 
 def workload_names(workload: str, names: list[str] | None) -> list[str]:
-    if workload == "alpha158-lite":
-        return alpha158_lite_names(names)
     if workload == "alpha158":
         return names or []
     if workload == "worldquant101":
@@ -642,8 +475,6 @@ def workload_names(workload: str, names: list[str] | None) -> list[str]:
 
 
 def default_engines(workload: str) -> list[str]:
-    if workload == "alpha158-lite":
-        return ["qfactors", "polars", "qlib"]
     if workload == "alpha158":
         return ["qfactors", "qlib"]
     if workload == "worldquant101":
@@ -667,25 +498,6 @@ def run_benchmarks(args: argparse.Namespace) -> list[BenchResult]:
                 results.append(summarize(engine, args.workload, df.height, factor_count, times, output))
             except Exception as exc:  # pragma: no cover - environment dependent
                 results.append(skipped(engine, args.workload, df.height, factor_count, str(exc)))
-        elif engine == "polars":
-            if args.workload != "alpha158-lite":
-                results.append(
-                    skipped(engine, args.workload, df.height, factor_count, "Polars baseline supports alpha158-lite")
-                )
-                continue
-            call = lambda: run_polars_alpha158_lite(df, selected)
-            times, output = measure(call, args.repeats, args.warmups)
-            results.append(
-                summarize(
-                    engine,
-                    args.workload,
-                    df.height,
-                    factor_count,
-                    times,
-                    output,
-                    note="Qlib Alpha158-compatible subset implemented with Polars expressions",
-                )
-            )
         elif engine == "kunquant":
             if args.workload != "worldquant101":
                 results.append(
@@ -721,7 +533,7 @@ def run_benchmarks(args: argparse.Namespace) -> list[BenchResult]:
             except Exception as exc:  # pragma: no cover - optional package/toolchain
                 results.append(skipped(engine, args.workload, df.height, factor_count, str(exc)))
         elif engine == "qlib":
-            if args.workload not in {"alpha158-lite", "alpha158"}:
+            if args.workload != "alpha158":
                 results.append(
                     skipped(engine, args.workload, df.height, factor_count, "Qlib runner supports Alpha158 workloads")
                 )
@@ -817,8 +629,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--workload",
-        choices=["alpha158-lite", "alpha158", "worldquant101"],
-        default="alpha158-lite",
+        choices=["alpha158", "worldquant101"],
+        default="alpha158",
         help="factor set to benchmark",
     )
     parser.add_argument("--engines", help="comma-separated engines; defaults depend on workload")
