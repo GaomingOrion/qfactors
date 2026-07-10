@@ -396,7 +396,18 @@ def run_kunquant_worldquant101(
     ) as tmp:
         out_name = str(Path(tmp) / "alpha101_lib")
         lib = cfake.compileit(
-            [("alpha101", function, KunCompilerConfig(input_layout="TS", output_layout="TS"))],
+            [
+                (
+                    "alpha101",
+                    function,
+                    KunCompilerConfig(
+                        dtype="double",
+                        input_layout="TS",
+                        output_layout="TS",
+                        options={"no_fast_stat": True},
+                    ),
+                )
+            ],
             out_name,
             cfake.CppCompilerConfig(),
         )
@@ -421,7 +432,7 @@ def panel_to_kunquant_inputs(df: pl.DataFrame) -> dict[str, np.ndarray]:
     out = {}
     for column in ["open", "high", "low", "close", "volume", "amount"]:
         values = sorted_df.get_column(column).to_numpy().reshape(n_assets, n_times)
-        out[column] = np.ascontiguousarray(values.T.astype(np.float32))
+        out[column] = np.ascontiguousarray(values.T.astype(np.float64))
     return out
 
 
@@ -622,7 +633,7 @@ def run_benchmarks(args: argparse.Namespace) -> list[BenchResult]:
                         times,
                         output,
                         compile_seconds=compile_seconds,
-                        note="elapsed includes compile+run; compile_seconds reports the best observed compile phase",
+                        note="f64 with fast statistics disabled; elapsed includes compile+run; compile_seconds reports the best observed compile phase",
                     )
                 )
             except Exception as exc:  # pragma: no cover - optional package/toolchain

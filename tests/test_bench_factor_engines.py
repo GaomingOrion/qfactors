@@ -2,6 +2,7 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -47,6 +48,7 @@ def test_panel_to_kunquant_inputs_are_time_stock_matrices():
 
     assert sorted(inputs) == ["amount", "close", "high", "low", "open", "volume"]
     assert inputs["close"].shape == (6, 5)
+    assert inputs["close"].dtype == np.float64
     first_asset = df.filter(pl.col("asset") == "S00000").sort("time")
     assert inputs["close"][:, 0].tolist() == pytest.approx(first_asset.get_column("close").to_list())
 
