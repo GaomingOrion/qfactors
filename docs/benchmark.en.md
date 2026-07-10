@@ -1,137 +1,129 @@
-# Performance And Benchmarks
+# Benchmarks
 
 [Chinese](benchmark.md)
 
-qweave's performance goal is not a standalone "faster" claim. The goal is to
-make common factor-research paths on large panels reproducible, explainable, and
-less dominated by Python loops.
+qweave is designed for large-panel factor research: compute a complete factor
+set from a Polars DataFrame and return its result without splitting research
+code into Python loops, temporary NumPy buffers, or compiled-artifact
+management. This page publishes only rerun Windows measurements and records the
+machine, commit, and commands.
 
-The development environment moved from macOS to Windows, so historical
-measurements are no longer a current reference. The results below were rerun in
-the current Windows/PowerShell environment with the machine profile, commit SHA,
-and exact commands recorded.
+## Takeaways
 
-## Current Verified Result: Batch DAG vs Per-Factor Calls
+- **Against Qlib Alpha158DL:** for the complete 158-factor Alpha158 workload,
+  qweave is **23.85× faster** by best time and uses about **46% less** peak RSS.
+- **Against KunQuant Alpha101:** for KunQuant's supported 82-factor
+  WorldQuant101 subset, with f64, low-precision fast statistics disabled, and
+  input/output conversion plus JIT included, qweave is **2.56× faster** end to
+  end and uses about **31% less** peak RSS.
+- **Workflow:** qweave takes and returns Polars DataFrames. KunQuant converts the
+  panel to contiguous `[time, stocks]` NumPy arrays, compiles a C++ bundle, then
+  converts its output-array dictionary back to a Polars DataFrame; all of those
+  steps are timed. Qlib Alpha158DL already returns a pandas DataFrame, but uses
+  a local binary provider and handler workflow.
+- **Cross-sectional factors:** `worldquant_alpha101()` places cross-sectional and
+  time-series operators in one expression DAG and runs them on the Polars panel
+  with one `compute_alphas` call. Compared with the provider/handler-oriented
+  Alpha158 path, research code does not need to prepare a provider, load a
+  handler, and then separately organize this computation.
 
-Measured on 2026-07-10 with the qweave v0.4.1 (`3eec6fc`) compute engine:
+Qlib and KunQuant ship different built-in factor sets, so their absolute times
+are not ranked against each other: the Qlib comparison is Alpha158 only, while
+the KunQuant comparison is its supported 82-factor Alpha101 subset only.
 
-- Windows 11 Pro 10.0.26200;
-- AMD Ryzen 9 9950X, 16 cores / 32 logical processors;
-- 61.7 GiB memory;
-- Python 3.12.13;
-- Rust 1.99.0-nightly;
-- 5,000 symbols × 1,000 days = 5,000,000 deterministic synthetic OHLCV rows;
-- all 158 Qlib Alpha158 factors, three measured runs after one warmup.
+## Environment and Method
 
-| Execution path | Best | Mean | Factor cells/s | Process peak RSS |
+- Windows 11 Pro 10.0.26200; AMD Ryzen 9 9950X, 16 cores / 32 logical
+  processors; 61.7 GiB RAM; Python 3.12.13; Rust 1.99.0-nightly release
+  extension.
+- Deterministic synthetic OHLCV panel: 6,000 symbols × 800 days = 4,800,000
+  rows. One warmup and three measured runs per engine; best, mean, stdev, and
+  process peak RSS are reported.
+- `POLARS_MAX_THREADS=32` and `RAYON_NUM_THREADS=32`; Qlib and KunQuant both
+  receive `--threads 32`. KunQuant runs in an x64 MSVC environment.
+- Alpha158 was measured on 2026-07-10 at commit
+  [`eb8c5d5`](https://github.com/GaomingOrion/qweave/commit/eb8c5d5);
+  WorldQuant101 was measured on 2026-07-11 at commit
+  [`ecbe2d7`](https://github.com/GaomingOrion/qweave/commit/ecbe2d7).
+
+## qweave vs Qlib: All 158 Alpha158 Factors
+
+Qlib `Alpha158DL` and qweave `qlib_alpha158()` both produce the complete
+Alpha158 output. Qlib uses a local binary provider generated from the same
+synthetic panel. Its loader returns a pandas DataFrame directly; this benchmark
+does not apply a further output conversion.
+
+| Engine | Best | Mean ± stdev | Factor cells/s | Process peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| qweave batch DAG | 2.9630 s | 3.0399 s | 266,621,244 | 9,934.4 MiB |
-| qweave per-factor calls | 50.4918 s | 51.4664 s | 15,646,102 | 8,404.1 MiB |
+| qweave | **2.2379 s** | 2.3092 ± 0.0619 s | 338,887,623 | 10,324.1 MiB |
+| Qlib Alpha158DL | 53.3692 s | 54.2714 ± 0.7821 s | 14,210,453 | 19,054.9 MiB |
 
-On this machine and synthetic panel, the batch DAG's best time was about
-**17.0× lower** than running one DAG call per factor. Both paths assemble the
-same complete 158-factor output; the batch path trades about 1.5 GiB more peak
-memory for substantially higher throughput. This demonstrates the value of
-shared-DAG execution, not a cross-machine performance guarantee.
+By best time, qweave is **23.85× faster** and uses about 54% of Qlib's peak
+memory. This describes the measured Alpha158 provider/handler path, not every
+feature or workload of the wider Qlib platform.
 
-Run each path in a separate process so one engine's historical peak does not
-contaminate the other's RSS:
+## qweave vs KunQuant: 82-Factor WorldQuant101 Subset
 
-```powershell
-uv run python scripts\bench_factor_engines.py --workload alpha158 --engines qweave --symbols 5000 --days 1000 --repeats 3 --warmups 1 --json results-batch.json
+Both paths compute the same 82 Alpha101 factors that KunQuant supports.
+KunQuant is compiled as f64 (`double`), has `fast_stat` disabled, and receives
+f64 input. Its end-to-end time includes sorting the Polars panel, converting it
+to TS NumPy arrays, JIT compilation, `runGraph`, and converting the output-array
+dictionary to a 4,800,000-row × 84-column Polars DataFrame.
+`output_convert_s` reports the best output-conversion time.
 
-uv run python scripts\bench_factor_engines.py --workload alpha158 --engines qweave-sequential --symbols 5000 --days 1000 --repeats 3 --warmups 1 --json results-sequential.json
-```
+| Engine | Best | Mean ± stdev | Factor cells/s | Process peak RSS | Best compile | Best output conversion |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| qweave | **3.1106 s** | 3.2749 ± 0.1449 s | 126,535,428 | 9,921.3 MiB | — | — |
+| KunQuant f64 | 7.9515 s | 8.0905 ± 0.2087 s | 49,500,299 | 14,324.0 MiB | 3.0587 s | 0.6430 s |
 
-## Why It Can Be Fast
+End to end, qweave is **2.56× faster**. KunQuant's 3.0587 s compilation and
+0.6430 s output-to-DataFrame conversion are both real parts of this research
+workflow. Even after subtracting compilation, the remainder still mixes input
+conversion, execution, and output conversion, so it is not a pure-compute
+benchmark. qweave needs neither a C++ toolchain, JIT wait, or compiled-artifact
+management, nor explicit DataFrame-to-NumPy-buffer round trips.
 
-- **Rust hot path:** sorting, validation, rolling windows, cross-sectional
-  operators, the DAG evaluator, and evaluation statistics run on the Rust side.
-- **Batch DAG execution:** when multiple alphas share subexpressions, the default
-  evaluator reuses results instead of treating every alpha as an isolated formula.
-- **Slot reuse:** intermediate arrays are managed by the evaluator to reduce
-  unnecessary allocation.
-- **Polars in and out:** users stay in DataFrame workflows instead of splitting
-  research code into ad hoc NumPy buffers for performance.
+## Why qweave Performs Well
 
-These are design goals and implementation paths, not fixed performance promises
-across machines and versions. Use the commands below to measure your environment.
+- **Rust and a shared DAG:** sorting, rolling windows, cross-sectional
+  operators, and the DAG evaluator run in Rust. Shared subexpressions are
+  reused across factors rather than recomputed factor by factor.
+- **Managed intermediate lifetimes:** the evaluator reuses intermediate slots to
+  reduce allocation; peak RSS is lower than the compared engine in both runs.
+- **DataFrame-native interface:** Polars DataFrames are both the input and
+  output, fitting directly into cleaning, labelling, evaluation, and downstream
+  research workflows.
+- **One expression path for time series and cross sections:** WorldQuant101
+  time-series and cross-sectional factors can be batched together instead of
+  being split into separate provider/handler stages.
 
-## Fair Comparison Principles
+These results apply to this version, machine, and synthetic data—not to all
+hardware, versions, or factor sets. Re-run the commands below for the target
+environment.
 
-- Use the same deterministic synthetic OHLCV panel, without external market data.
-- Build the qweave extension in release mode.
-- Keep at least one warmup run so first import, bytecode compilation, or cache
-  initialization is not mixed into compute time.
-- Record best, mean, stdev, rows/s, cells/s, and process peak RSS.
-- Keep `compile_s` for KunQuant, because compiling a new expression bundle is
-  part of the end-to-end experience.
-
-## Environment Setup
+## Reproduce on Your Machine
 
 ```powershell
 uv sync --dev
 uv run maturin develop --uv --release
-```
-
-If your user profile or workspace path contains non-ASCII characters, Qlib or
-KunQuant dependency/JIT paths may be unstable. Point temporary directories at an
-ASCII-only path:
-
-```powershell
 New-Item -ItemType Directory -Force C:\qweave-bench-tmp | Out-Null
 $env:TMP = "C:\qweave-bench-tmp"
 $env:TEMP = "C:\qweave-bench-tmp"
+$env:POLARS_MAX_THREADS = "32"
+$env:RAYON_NUM_THREADS = "32"
 ```
-
-## Qlib Alpha158
-
-This path compares Qlib `Alpha158DL` with qweave's `qlib_alpha158()` expression
-library.
 
 ```powershell
-uv run --frozen --with pyqlib python scripts\bench_factor_engines.py --workload alpha158 --engines qweave,qlib --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 1 --json results-alpha158.json
+uv run --frozen --with pyqlib python scripts\bench_factor_engines.py --workload alpha158 --engines qweave,qlib --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 32 --json results-alpha158.json
 ```
 
-## KunQuant WorldQuant101
-
-This path compares KunQuant Alpha101 JIT execution with qweave's
-`worldquant_alpha101()` expression library.
+Run KunQuant from an x64 Developer PowerShell:
 
 ```powershell
-uv run --frozen --with KunQuant --with setuptools python scripts\bench_factor_engines.py --workload worldquant101 --engines qweave,kunquant --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 1 --json results-worldquant101.json
+uv run --frozen --with KunQuant --with setuptools python scripts\bench_factor_engines.py --workload worldquant101 --engines qweave,kunquant --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 32 --json results-worldquant101.json
 ```
 
-## Useful Options
-
-- `--symbols` and `--days` scale the synthetic panel.
-- `--repeats` and `--warmups` control timing runs.
-- `--names` selects a comma-separated factor subset.
-- `--threads` controls the optional runner thread count.
-- `--engines qweave-sequential` runs the one-DAG-call-per-factor baseline; run
-  it separately from the batch path for a valid peak-RSS comparison.
-- `--json results.json` saves machine-readable results.
-
-Suggested result record:
-
-```text
-date:
-commit:
-machine:
-command:
-engine:
-workload:
-symbols:
-days:
-factors:
-best_s:
-mean_s:
-stdev_s:
-rows_per_s:
-cells_per_s:
-peak_rss_mib:
-compile_s:  # KunQuant only, when present
-```
-
-The script lives at
+`--symbols`, `--days`, `--repeats`, `--warmups`, `--names`, and `--threads`
+control benchmark scale and parallelism. JSON records `compile_seconds` and
+`output_conversion_seconds` when they apply to KunQuant. The script is
 [scripts/bench_factor_engines.py](../scripts/bench_factor_engines.py).

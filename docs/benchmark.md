@@ -2,125 +2,108 @@
 
 [English](benchmark.en.md)
 
-qweave 的性能目标不是一句孤立的“更快”，而是让大面板上的常见因子研究路径可以
-稳定复现、容易解释、少受 Python 循环影响。
+qweave 面向大面板因子研究：在 Polars DataFrame 上一次性计算并返回因子结果，不把
+研究代码拆成 Python 循环、临时 NumPy buffer 或编译产物管理。本页只发布当前
+Windows 环境重新测量的结果，并保留机器、commit 和命令。
 
-项目开发环境已从 macOS 迁移到 Windows，历史测量不再作为当前参考。下面只发布在
-当前 Windows/PowerShell 环境重新测量、并记录机器配置、commit SHA 和完整命令的
-结果。
+## 本次结论
 
-## 当前验证结果：批量 DAG vs 逐因子调用
+- **对 Qlib Alpha158DL：** 完整 Alpha158（158 因子）上，qweave 最佳耗时快
+  **23.85×**，峰值 RSS 少约 **46%**。
+- **对 KunQuant Alpha101：** 在 KunQuant 支持的 82 个 WorldQuant101 因子、f64、
+  关闭低精度 fast-stat、并把输入/输出转换与 JIT 都计入后，qweave 端到端最佳耗时快
+  **2.56×**，峰值 RSS 少约 **31%**。
+- **工作流：** qweave 直接接收并返回 Polars DataFrame。KunQuant 需将面板转换为
+  `[time, stocks]` 的连续 NumPy 数组、编译 C++ bundle，再将输出数组字典转回 Polars
+  DataFrame；这些步骤都已计时。Qlib Alpha158DL 已直接返回 pandas DataFrame，但使用
+  本地 binary provider 与 handler 工作流。
+- **截面因子：** qweave 的 `worldquant_alpha101()` 将截面与时序算子放在同一表达式
+  DAG 中，通过一次 `compute_alphas` 直接在 Polars 面板上运行。相比围绕 provider /
+  handler 组织的 Alpha158 路径，研究代码不需要先准备 provider、再通过 handler 分阶段
+  取得特征后另行组织这类计算。
 
-测量日期为 2026-07-10，使用 qweave v0.4.1（`3eec6fc`）的计算引擎：
+Qlib 与 KunQuant 支持的内置因子集不同，因而没有把两者的绝对秒数相互排名：Qlib 比较
+只针对 Alpha158，KunQuant 比较只针对其支持的 82 个 Alpha101 因子。
 
-- Windows 11 Pro 10.0.26200；
-- AMD Ryzen 9 9950X，16 核 / 32 逻辑处理器；
-- 61.7 GiB 内存；
-- Python 3.12.13；
-- Rust 1.99.0-nightly；
-- 5,000 个股票 × 1,000 天 = 5,000,000 行确定性合成 OHLCV 数据；
-- Qlib Alpha158 全部 158 个因子，1 次 warmup 后测量 3 次。
+## 测量环境与口径
 
-| 执行方式 | 最佳耗时 | 平均耗时 | 因子值/秒 | 进程峰值 RSS |
+- Windows 11 Pro 10.0.26200；AMD Ryzen 9 9950X，16 核 / 32 逻辑处理器；61.7 GiB
+  内存；Python 3.12.13；Rust 1.99.0-nightly release 扩展。
+- 确定性合成 OHLCV 面板：6,000 个股票 × 800 天 = 4,800,000 行；每项 1 次 warmup
+  后测量 3 次，报告 best、mean、stdev 与进程峰值 RSS。
+- `POLARS_MAX_THREADS=32` 与 `RAYON_NUM_THREADS=32`；Qlib 和 KunQuant 均传入
+  `--threads 32`。KunQuant 在 x64 MSVC 环境运行。
+- Alpha158 于 2026-07-10、commit [`eb8c5d5`](https://github.com/GaomingOrion/qweave/commit/eb8c5d5)
+  测量；WorldQuant101 于 2026-07-11、commit [`ecbe2d7`](https://github.com/GaomingOrion/qweave/commit/ecbe2d7)
+  测量。
+
+## qweave vs Qlib：Alpha158 全部 158 因子
+
+Qlib `Alpha158DL` 与 qweave `qlib_alpha158()` 都产出完整 Alpha158。Qlib 使用由同一
+合成面板生成的本地 binary provider；其 loader 直接返回 pandas DataFrame，脚本没有做
+额外输出转换。
+
+| 引擎 | 最佳耗时 | 平均耗时 ± stdev | 因子值/秒 | 进程峰值 RSS |
 | --- | ---: | ---: | ---: | ---: |
-| qweave 批量 DAG | 2.9630 s | 3.0399 s | 266,621,244 | 9,934.4 MiB |
-| qweave 逐因子调用 | 50.4918 s | 51.4664 s | 15,646,102 | 8,404.1 MiB |
+| qweave | **2.2379 s** | 2.3092 ± 0.0619 s | 338,887,623 | 10,324.1 MiB |
+| Qlib Alpha158DL | 53.3692 s | 54.2714 ± 0.7821 s | 14,210,453 | 19,054.9 MiB |
 
-在这台机器和该合成面板上，批量 DAG 的最佳耗时约为逐因子调用的 **1/17.0**。两条
-路径都最终组装完整的 158 因子输出；批量路径用约 1.5 GiB 更高的峰值内存换取更高
-吞吐。该结果用于说明共享 DAG 的批处理价值，不是跨机器性能保证。
+按最佳耗时，qweave 快 **23.85×**；峰值内存为 Qlib 的约 54%。这反映的是此 Alpha158
+provider/handler 路径的结果，不代表 Qlib 平台全部功能的性能边界。
 
-为避免一个引擎的历史峰值污染另一个引擎的 RSS，两个命令应在独立进程中运行：
+## qweave vs KunQuant：WorldQuant101 的 82 因子子集
 
-```powershell
-uv run python scripts\bench_factor_engines.py --workload alpha158 --engines qweave --symbols 5000 --days 1000 --repeats 3 --warmups 1 --json results-batch.json
+两条路径计算 KunQuant 支持的同一 82 个 Alpha101 因子。KunQuant 编译为 f64
+(`double`)，关闭 `fast_stat`，并使用 f64 输入。其端到端时间包含 Polars 面板排序、转换为
+TS NumPy 数组、JIT 编译、`runGraph`、以及输出数组字典转换为 4,800,000 行 × 84 列的
+Polars DataFrame；`output_convert_s` 单列最佳输出转换耗时。
 
-uv run python scripts\bench_factor_engines.py --workload alpha158 --engines qweave-sequential --symbols 5000 --days 1000 --repeats 3 --warmups 1 --json results-sequential.json
-```
+| 引擎 | 最佳耗时 | 平均耗时 ± stdev | 因子值/秒 | 进程峰值 RSS | 最佳编译 | 最佳输出转换 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| qweave | **3.1106 s** | 3.2749 ± 0.1449 s | 126,535,428 | 9,921.3 MiB | — | — |
+| KunQuant f64 | 7.9515 s | 8.0905 ± 0.2087 s | 49,500,299 | 14,324.0 MiB | 3.0587 s | 0.6430 s |
 
-## 为什么可能快
+端到端 qweave 快 **2.56×**。KunQuant 的 3.0587 s 编译与 0.6430 s 输出 DataFrame 转换
+均是实际研究工作流的一部分；即使扣除编译，剩余时间仍混有输入转换、执行和输出转换，
+不能称为“纯计算”基准。qweave 不需要 C++ 工具链、JIT 等待或编译产物管理，也无需在
+DataFrame 与 NumPy buffer 之间组织来回转换。
 
-- **Rust 热路径：** 排序、校验、rolling window、截面算子、DAG evaluator 和评估
-  统计都在 Rust 侧运行。
-- **DAG 批量执行：** 多个 alpha 共享相同子表达式时，默认 evaluator 会复用计算
-  结果，而不是把每个 alpha 当作孤立公式反复计算。
-- **slot 复用：** 中间数组生命周期由 evaluator 管理，减少无谓分配。
-- **Polars 入口和出口：** 用户仍然在 DataFrame 世界里工作，不需要为了性能把流程
-  拆成零散的 NumPy buffer 管理代码。
+## qweave 的实现优势
 
-这些是设计目标和实现路径，不等于跨机器、跨版本的固定性能承诺。请使用下面命令在
-你的环境里测量。
+- **Rust + 共享 DAG：** 排序、rolling window、截面算子与 DAG evaluator 在 Rust 侧运行；
+  多个因子共享子表达式时会复用结果，而非逐因子重复求值。
+- **内存生命周期管理：** evaluator 复用中间 slot，减少不必要的分配；两组实测的峰值
+  RSS 都低于对手。
+- **DataFrame 原生接口：** 输入和输出均为 Polars DataFrame，适合直接接到清洗、标签、
+  评估和下游研究流程。
+- **一条表达式路径覆盖时序与截面：** WorldQuant101 的时序和截面因子可同批计算，不必将
+  因子实现拆到独立的 provider / handler 阶段。
 
-## 公平对比原则
+这些是当前版本、这台机器和指定合成数据上的结果，不是跨版本、跨硬件或全部因子集合的
+固定承诺。请在目标环境复测。
 
-- 使用相同的合成 OHLCV 面板，不依赖真实市场数据。
-- qweave 扩展使用 release 模式构建。
-- 至少保留一次 warmup，避免把首次 import、bytecode compile 或 cache 初始化混入
-  计算时间。
-- 同时记录 best、mean、stdev、rows/s、cells/s 和进程峰值 RSS。
-- 比较 KunQuant 时保留 `compile_s`，因为编译新表达式 bundle 是端到端体验的一部分。
-
-## 环境准备
+## 在你的机器上复现
 
 ```powershell
 uv sync --dev
 uv run maturin develop --uv --release
-```
-
-如果本机用户目录或 workspace 路径包含非 ASCII 字符，Qlib 或 KunQuant 的依赖/JIT
-路径可能不够稳定。可把临时目录指向 ASCII-only 路径：
-
-```powershell
 New-Item -ItemType Directory -Force C:\qweave-bench-tmp | Out-Null
 $env:TMP = "C:\qweave-bench-tmp"
 $env:TEMP = "C:\qweave-bench-tmp"
+$env:POLARS_MAX_THREADS = "32"
+$env:RAYON_NUM_THREADS = "32"
 ```
-
-## Qlib Alpha158
-
-该路径比较 Qlib `Alpha158DL` 与 qweave 的 `qlib_alpha158()` 表达式库。
 
 ```powershell
-uv run --frozen --with pyqlib python scripts\bench_factor_engines.py --workload alpha158 --engines qweave,qlib --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 1 --json results-alpha158.json
+uv run --frozen --with pyqlib python scripts\bench_factor_engines.py --workload alpha158 --engines qweave,qlib --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 32 --json results-alpha158.json
 ```
 
-## KunQuant WorldQuant101
-
-该路径比较 KunQuant Alpha101 JIT 与 qweave 的 `worldquant_alpha101()` 表达式库。
+在 x64 Developer PowerShell 中运行 KunQuant：
 
 ```powershell
-uv run --frozen --with KunQuant --with setuptools python scripts\bench_factor_engines.py --workload worldquant101 --engines qweave,kunquant --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 1 --json results-worldquant101.json
+uv run --frozen --with KunQuant --with setuptools python scripts\bench_factor_engines.py --workload worldquant101 --engines qweave,kunquant --symbols 6000 --days 800 --repeats 3 --warmups 1 --threads 32 --json results-worldquant101.json
 ```
 
-## 常用参数
-
-- `--symbols` 和 `--days` 控制合成面板规模。
-- `--repeats` 和 `--warmups` 控制计时次数。
-- `--names` 选择逗号分隔的因子子集。
-- `--threads` 控制可选 runner 的线程数。
-- `--engines qweave-sequential` 使用逐因子独立 DAG 基线；为正确比较峰值 RSS，应与
-  批量路径分开运行。
-- `--json results.json` 保存机器可读结果。
-
-结果发布建议：
-
-```text
-date:
-commit:
-machine:
-command:
-engine:
-workload:
-symbols:
-days:
-factors:
-best_s:
-mean_s:
-stdev_s:
-rows_per_s:
-cells_per_s:
-peak_rss_mib:
-compile_s:  # KunQuant only, when present
-```
-
-脚本位置：[scripts/bench_factor_engines.py](../scripts/bench_factor_engines.py)。
+`--symbols`、`--days`、`--repeats`、`--warmups`、`--names` 与 `--threads` 控制基准
+规模和并行度。JSON 会记录 `compile_seconds` 和 `output_conversion_seconds`（KunQuant
+适用）。脚本位置：[scripts/bench_factor_engines.py](../scripts/bench_factor_engines.py)。
