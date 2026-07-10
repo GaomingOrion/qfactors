@@ -9,10 +9,20 @@ and patch versions should remain backward compatible within a minor line.
 
 - None.
 
+## v0.4.1 - 2026-07-10
+
+- Renamed the public project surface to qweave in documentation and repository
+  metadata.
+- Reworked the README and docs into Chinese-first bilingual public
+  documentation, with clearer positioning against Qlib and KunQuant.
+- Added release benchmark notes for the Windows/PowerShell environment.
+- Updated the GitHub Release workflow to use checked-in release notes when a
+  tag-specific notes file is present.
+
 ## v0.4.0 - 2026-07-02
 
-- Added `qweave.qlib_alpha158(input_alias, alphas=None)` — the Qlib Alpha158
-  feature set (9 kbar + 4 price + 29 rolling groups × 5 windows = 158 factors)
+- Added `qweave.qlib_alpha158(input_alias, alphas=None)` - the Qlib Alpha158
+  feature set (9 kbar + 4 price + 29 rolling groups x 5 windows = 158 factors)
   as alpha expressions. See `docs/qlib_alpha158.md` for caliber notes.
 - Added `slope`, `rsquare`, `resi`, and `quantile` as expression kernels
   (`PyExpr` methods and Rust builders) backing the Alpha158 regression and
