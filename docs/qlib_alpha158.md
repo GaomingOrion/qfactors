@@ -1,52 +1,46 @@
-# qlib Alpha158
+# Qlib Alpha158
 
-qweave builds the Microsoft Qlib `Alpha158` feature set as 158 built-in alpha
-expressions. The formulas follow Qlib's `Alpha158` handler; project-specific
-calibers are documented below.
+[English](qlib_alpha158.en.md)
 
-## Structure
+qweave 将 Microsoft Qlib 的 `Alpha158` 特征集构造成 158 个内置 alpha 表达式。
+公式参考 Qlib `Alpha158` handler；项目差异口径记录在本文。
 
-The 158 factors break down as:
+本项目与 Microsoft 或 Qlib 没有关联。
 
-- **9 kbar** candlestick-shape factors: `KMID`, `KLEN`, `KMID2`, `KUP`, `KUP2`,
-  `KLOW`, `KLOW2`, `KSFT`, `KSFT2`.
-- **4 price** factors normalized by close: `OPEN0`, `HIGH0`, `LOW0`, `VWAP0`.
-- **29 rolling groups × 5 windows** (`{5, 10, 20, 30, 60}`), named `<GROUP><d>`
-  (e.g. `MA5`, `CORR60`):
+## 结构
 
-  | Group | Meaning |
-  | --- | --- |
-  | `ROC` | rate of change, `delay(close, d) / close` |
-  | `MA` | `ts_mean(close, d) / close` |
-  | `STD` | `ts_std(close, d) / close` |
-  | `BETA` | linear-trend slope over the window, `/ close` |
-  | `RSQR` | R² of the same linear fit |
-  | `RESI` | residual of the last point from the fit, `/ close` |
-  | `MAX` | `ts_max(high, d) / close` |
-  | `MIN` | `ts_min(low, d) / close` |
-  | `QTLU` | 0.8 quantile of close over the window, `/ close` |
-  | `QTLD` | 0.2 quantile of close over the window, `/ close` |
-  | `RANK` | time-series percentile rank of close |
-  | `RSV` | `(close - ts_min(low, d)) / (ts_max(high, d) - ts_min(low, d))` |
-  | `IMAX` | window position of the high's max (see calibers) |
-  | `IMIN` | window position of the low's min |
-  | `IMXD` | `IMAX` − `IMIN` position difference |
-  | `CORR` | correlation of close with `log(volume + 1)` |
-  | `CORD` | correlation of close return with log volume ratio |
-  | `CNTP` | fraction of up days (`close > delay(close, 1)`) |
-  | `CNTN` | fraction of down days |
-  | `CNTD` | `CNTP − CNTN` |
-  | `SUMP` | up-move sum / total abs-move sum (close) |
-  | `SUMN` | down-move sum / total abs-move sum (close) |
-  | `SUMD` | `(up − down)` sum / total abs-move sum (close) |
-  | `VMA` | `ts_mean(volume, d) / volume` |
-  | `VSTD` | `ts_std(volume, d) / volume` |
-  | `WVMA` | std / mean of `|return| * volume` over the window |
-  | `VSUMP` / `VSUMN` / `VSUMD` | `SUMP` / `SUMN` / `SUMD` on volume |
+158 个因子由以下部分组成：
 
-All factors are per-symbol time-series or element-wise; none use a cross-section.
+- **9 个 kbar 蜡烛形态因子：** `KMID`、`KLEN`、`KMID2`、`KUP`、`KUP2`、
+  `KLOW`、`KLOW2`、`KSFT`、`KSFT2`。
+- **4 个价格因子：** `OPEN0`、`HIGH0`、`LOW0`、`VWAP0`，均按 close 归一化。
+- **29 组 rolling 因子 x 5 个窗口：** 窗口为 `{5, 10, 20, 30, 60}`，
+  命名为 `<GROUP><d>`，例如 `MA5`、`CORR60`。
 
-## Public Surface
+常见 rolling group：
+
+| Group | 含义 |
+| --- | --- |
+| `ROC` | `delay(close, d) / close` |
+| `MA` | `ts_mean(close, d) / close` |
+| `STD` | `ts_std(close, d) / close` |
+| `BETA` | 窗口线性趋势斜率，按 close 归一化 |
+| `RSQR` | 同一线性拟合的 R2 |
+| `RESI` | 窗口最后一点相对拟合线的残差，按 close 归一化 |
+| `MAX` / `MIN` | high/low 的 rolling max/min，按 close 归一化 |
+| `QTLU` / `QTLD` | close 的 0.8 / 0.2 rolling quantile，按 close 归一化 |
+| `RANK` | close 的时序百分位 rank |
+| `RSV` | `(close - ts_min(low, d)) / (ts_max(high, d) - ts_min(low, d))` |
+| `IMAX` / `IMIN` / `IMXD` | high/low 极值在窗口内的位置及差值 |
+| `CORR` / `CORD` | close 与成交量相关性相关特征 |
+| `CNTP` / `CNTN` / `CNTD` | 上涨/下跌天数比例及差值 |
+| `SUMP` / `SUMN` / `SUMD` | 上涨/下跌幅度和及差值 |
+| `VMA` / `VSTD` / `WVMA` | 成交量相关 rolling 特征 |
+| `VSUMP` / `VSUMN` / `VSUMD` | 成交量版本的 `SUMP` / `SUMN` / `SUMD` |
+
+所有因子都是逐 symbol 的时序或逐元素表达式，不使用截面信息。
+
+## 公开接口
 
 ```python
 alphas = qweave.qlib_alpha158(
@@ -56,56 +50,34 @@ alphas = qweave.qlib_alpha158(
 qweave.compute_alphas(df, "asset", "time", alphas)
 ```
 
-`qlib_alpha158(input_alias, alphas=None)` returns `PyExpr` objects for the
-built-in set (all 158 when `alphas` is omitted, or the named subset in request
-order). `input_alias` maps canonical input names such as `close` to physical
-DataFrame columns; pass an empty dict for identity mapping. `compute_alphas()`
-evaluates the expressions over the full `(time, symbol)` panel, while
-`with_alphas()` appends them in original row order. See
-[expression_api.md](expression_api.md) for custom expression construction.
+`qlib_alpha158(input_alias, alphas=None)` 返回 `PyExpr` 对象。省略 `alphas`
+时返回全部 158 个因子；传入 `alphas` 时按请求顺序返回指定子集。
+`input_alias` 将标准输入字段映射到实际 DataFrame 列；不需要映射时传空 dict。
 
-## Input Fields
+## 输入字段
 
-Every factor references only `open`, `high`, `low`, `close`, `volume`, and
-`vwap`. There are no group-classification or fundamental inputs.
+所有因子只引用 `open`、`high`、`low`、`close`、`volume`、`vwap`。
+不需要行业分类或基本面字段。
 
-## Calibers (differences from Qlib)
+## 与 Qlib 的差异口径
 
-- **Warmup.** Qlib rolls with `min_periods=1`, emitting partial-window values
-  from the first row. qweave requires a full, NaN-free window, so each symbol's
-  first `d − 1` rows are `NaN`. Factors built on a one-step delay/delta (`ROC`,
-  `CNTP`/`CNTN`/`CNTD`, the `SUM*`/`VSUM*` families, `CORD`) begin one row later
-  because the `delay(x, 1)` term is `NaN` on the first row and propagates through
-  the window.
-- **`IMAX`/`IMIN` offset.** qweave `ts_argmax`/`ts_argmin` are 0-based (position
-  within the window, 0 = oldest) while Qlib `IdxMax`/`IdxMin` are 1-based. The
-  builder adds `+1` so `IMAX`/`IMIN` match Qlib. In `IMXD` the two offsets cancel,
-  so it is built without `+1`.
-- **Comparison / boolean NaN.** `close > delay(close, 1)` is `NaN` (not `0`) when
-  the prior close is missing, so the `CNT*` averages ignore no rows but inherit
-  the warmup `NaN` above.
-- **Quantile.** `QTLU`/`QTLD` use pandas `linear` interpolation:
-  `pos = q · (N − 1)`, interpolating between the floor and ceil order statistics.
-- **Standard deviation.** `STD`, `VSTD`, and `WVMA` use the sample standard
-  deviation (`ddof = 1`), matching pandas/Qlib.
-- **Correlation.** `CORR`/`CORD` are Pearson correlations and return `NaN` when
-  either window has zero variance.
+- **Warmup：** Qlib 使用 `min_periods=1`，会在窗口未满时输出部分窗口值。
+  qweave 要求完整且非 NaN 的窗口，因此每个 symbol 的前 `d - 1` 行为 NaN。
+- **`IMAX` / `IMIN` offset：** qweave 的 `ts_argmax` / `ts_argmin` 是 0-based；
+  Qlib 的 `IdxMax` / `IdxMin` 是 1-based。builder 会加 `+1` 对齐 Qlib。
+  `IMXD` 中两个 offset 会抵消，因此不加 `+1`。
+- **比较和 boolean NaN：** `close > delay(close, 1)` 在前值缺失时为 NaN，
+  不会被强制转成 0。
+- **Quantile：** `QTLU` / `QTLD` 使用 pandas `linear` 插值口径。
+- **标准差：** `STD`、`VSTD`、`WVMA` 使用样本标准差（`ddof = 1`）。
+- **相关性：** `CORR` / `CORD` 是 Pearson correlation；任一窗口零方差时返回 NaN。
 
-`BETA`/`RSQR`/`RESI` and `QTLU`/`QTLD` are backed by dedicated Rust kernels
-(`slope`, `rsquare`, `resi`, `quantile`) rather than being composed from other
-operators. The regression kernels use the closed-form ordinary-least-squares fit
-against the window index `0..d-1` (x̄ = (d−1)/2, Sxx = d(d²−1)/12); `RSQR` is
-`NaN` when the window has zero variance.
+`BETA`、`RSQR`、`RESI`、`QTLU`、`QTLD` 使用专门的 Rust kernel，而不是由其他
+表达式组合出来。
 
-## Verification
+## 验证
 
-- Rust unit tests assert the builder returns exactly 158 uniquely named factors
-  that reference only OHLCV and vwap, and that `IMAX` keeps its `+1` offset.
-- A smoke test computes all 158 on a complete synthetic panel.
-- Python tests compare 18 representative factors (one per distinct kernel and
-  caliber, including the four new kernels and the warmup/NaN edges) against an
-  independent NumPy reference at `1e-10` tolerance.
-- A frozen synthetic Parquet golden fixture guards all 158 outputs against
-  unintended numerical drift.
-
-This project is not affiliated with Microsoft or Qlib.
+- Rust 单测确认 builder 返回 158 个唯一命名因子，并且只引用 OHLCV 和 vwap。
+- smoke test 在完整合成面板上计算全部 158 个因子。
+- Python 测试用独立 NumPy reference 覆盖代表性因子和边界口径。
+- 冻结的合成 Parquet golden fixture 防止非预期数值漂移。

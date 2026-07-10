@@ -1,40 +1,53 @@
-# Factor Evaluation
+# 因子评估
 
-**Status: experimental.** The evaluation API (`with_labels`, `evaluate`,
-`factor_correlation`) is new and not yet covered by a frozen golden fixture the
-way the alpha engine is. Calibers are validated against an independent pure-numpy
-reference and against alphalens-reloaded on a matched configuration (see
-[Validation](#validation)), but the surface may still change before 1.0.
+[English](factor_evaluation.en.md)
 
-The evaluator answers *"does this factor carry information about forward
-returns?"* — predictive power (IC), monotonicity (quantile returns), and
-tradability (turnover, a long-short portfolio). It is not a backtester: there is
-no fill simulation, slippage, or holding-period extension from exit-side
-illiquidity.
+**状态：experimental。** `with_labels`、`evaluate`、`factor_correlation`
+是新的评估 API，还没有像 alpha 引擎那样建立冻结 golden fixture。当前口径已通过
+独立 NumPy reference 和 alphalens-reloaded 对照验证，但 1.0 前接口仍可能调整。
+
+评估器回答的问题是：**这个因子是否携带 forward return 信息？** 它关注预测力
+（IC / RankIC）、单调性（分位收益）和交易可用性（换手、long-short 组合）。
+它不是回测器：不模拟撮合、滑点、成交约束或退出侧流动性。
 
 ## Pipeline
 
-Evaluation is a single-DataFrame pipeline. Each stage appends columns in the
-original row order; nothing is joined:
+评估流程是单 DataFrame pipeline。每一步都按原始行序追加列，不做额外 join：
 
 ```python
 import qweave as qf
 
-# 1) factor columns (existing API)
-df = qf.with_alphas(df, symbol_col="symbol", time_col="date",
-                    alphas=qf.worldquant_alpha101({}))
+# 1) 计算或准备因子列
+df = qf.with_alphas(
+    df,
+    symbol_col="symbol",
+    time_col="date",
+    alphas=qf.worldquant_alpha101({}),
+)
 
-# 2) forward-return label columns
-df = qf.with_labels(df, symbol_col="symbol", time_col="date",
-                    horizons=[1, 5, 10, 20],
-                    entry_lag=1, entry_col="close", exit_col="close",
-                    tradable_col="tradable")   # -> ret_1..ret_20, tradable_entry
+# 2) 追加 forward-return 标签
+df = qf.with_labels(
+    df,
+    symbol_col="symbol",
+    time_col="date",
+    horizons=[1, 5, 10, 20],
+    entry_lag=1,
+    entry_col="close",
+    exit_col="close",
+    tradable_col="tradable",
+)
 
-# 3) evaluate (single frame in, no join; factor_cols required)
-result = qf.evaluate(df, symbol_col="symbol", time_col="date",
-                     factor_cols=[f"alpha{i}" for i in range(1, 102)],
-                     quantiles=10, binning="daily",
-                     tradable_col="tradable_entry", demean="none")
+# 3) 评估因子列
+result = qf.evaluate(
+    df,
+    symbol_col="symbol",
+    time_col="date",
+    factor_cols=[f"alpha{i}" for i in range(1, 102)],
+    quantiles=10,
+    binning="daily",
+    tradable_col="tradable_entry",
+    demean="none",
+)
 
 result.summary.sort("rank_ic_ir", descending=True).head(20)
 result.save("runs/2026-07-04/")
@@ -42,48 +55,40 @@ result.save("runs/2026-07-04/")
 
 ## `with_labels`
 
-```
+标签定义：
+
+```text
 ret_h(t) = exit(t + entry_lag + h) / entry(t + entry_lag) - 1
 ```
 
-Bar offsets are taken on the **panel-wide date grid** — the union of all panel
-dates (or an explicit `calendar`), not each symbol's own observed bars. A
-symbol missing a day yields NaN there instead of silently compressing its
-holding period.
+bar offset 基于**全面板日期网格**，即所有 symbol 日期的 union，或调用方显式传入
+的 `calendar`。如果某个 symbol 在某天缺行，该位置输出 NaN，而不是悄悄压缩持有
+期。
 
-| parameter | default | meaning |
-|---|---|---|
-| `horizons` | — | holding periods in panel bars (integers, positive, unique) |
-| `entry_lag` | `1` | bars between the signal (T) and entry (T+1 = T+1 close by default) |
-| `entry_col` / `exit_col` | `"close"` | entry/exit price columns; either can be `"open"` or any price column (vwap, …) |
-| `tradable_col` | `None` | boolean "can trade at the entry price on this day"; when given, `tradable_entry` is appended |
-| `calendar` | `None` | explicit trading-day series for strict validation |
+| 参数 | 默认值 | 含义 |
+| --- | --- | --- |
+| `horizons` | 必填 | panel bar 维度的持有期，必须为正整数且唯一 |
+| `entry_lag` | `1` | 信号日 T 到入场日之间的 bar 数 |
+| `entry_col` / `exit_col` | `"close"` | 入场/出场价格列 |
+| `tradable_col` | `None` | 入场日是否可交易的 boolean 列 |
+| `calendar` | `None` | 显式交易日序列，用于严格校验 |
 
-The default (`entry_lag=1`, close→close) is the conservative A-share T+1 caliber:
-compute the factor on T's close, enter on T+1's close, hold `h` bars — no
-look-ahead.
+默认口径是较保守的 T+1 close-to-close：在 T 日收盘计算信号，T+1 收盘入场，持有
+`h` 个 bar，不引入 look-ahead。
 
-**`tradable_entry`.** The signal is on T but the trade happens on
-`T + entry_lag`, so tradability must be checked on the entry day. `with_labels`
-does that shift once and appends `tradable_entry` aligned back to the signal
-day, for `evaluate` to consume. Missing rows and null flags on the entry day
-count as *not tradable*.
-
-**Trading-day grid.** Without a calendar the grid is the panel's own date
-union, and its completeness is the caller's responsibility — a whole missing
-trading day means the data source dropped that day for everyone, which belongs
-in the data layer, not in a calendar-inference heuristic (weekends and holidays
-are indistinguishable from dropped days from inside the data). With a
-`calendar`, panel dates must be a subset of it; calendar days inside the panel's
-range with no panel rows occupy a grid slot (labels crossing them are NaN) and
-are reported via a `UserWarning`.
+如果提供 `tradable_col`，`with_labels` 会把入场日的可交易标记 shift 回信号日，
+追加为 `tradable_entry`，供 `evaluate` 使用。入场日缺行或标记为 null 都视为
+不可交易。
 
 ## `evaluate`
 
 ```python
 result = qf.evaluate(
-    df, symbol_col, time_col, factor_cols,
-    label_cols=None,        # None => auto-detect ret_{h} columns
+    df,
+    symbol_col,
+    time_col,
+    factor_cols,
+    label_cols=None,        # None => 自动识别 ret_{h}
     quantiles=10,
     binning="daily",        # "daily" | "global"
     group_col=None,
@@ -91,210 +96,147 @@ result = qf.evaluate(
     demean="none",          # "none" | "universe" | "group"
     min_cs_count=30,
     cost_bps=0.0,
-    weighting="quantile",   # "quantile" (default) | "factor"
-    output_dir=None,        # set => stream large tables to parquet
+    weighting="quantile",   # "quantile" | "factor"
+    output_dir=None,
 )
 ```
 
-`factor_cols` is required (the frame mixes price, factor, and label columns, all
-f64). `label_cols` defaults to every `ret_{h}`-named column; the integer horizon
-is parsed from the name (it drives the Newey–West lag).
+`factor_cols` 必填，因为输入 frame 会同时包含价格列、因子列和标签列。
+`label_cols=None` 时自动识别所有 `ret_{h}` 命名列，并从列名中解析 horizon。
 
-### Validity layers
+### 有效样本层
 
-Per day, per factor:
+逐日、逐因子：
 
-- **factor-valid** = tradable ∧ factor non-NaN (horizon independent).
-- **pair-valid(h)** = factor-valid ∧ label(h) non-NaN.
-- A day with fewer than `min_cs_count` factor-valid samples is skipped entirely
-  (IC/RankIC NaN, no quantile rows); coverage still records it.
-- A horizon with fewer than `min_cs_count` pair-valid samples gets NaN
-  IC/RankIC/spread, but its bucket means remain visible — the `count` column
-  tells you how thin the day was.
+- **factor-valid** = 可交易且因子非 NaN。
+- **pair-valid(h)** = factor-valid 且 `ret_h` 非 NaN。
+- factor-valid 少于 `min_cs_count` 的日期会被整日跳过。
+- pair-valid 少于 `min_cs_count` 的 horizon 会得到 NaN 的 IC/RankIC/spread，
+  但分位桶均值仍保留，`count` 会告诉你样本有多薄。
 
-Not-tradable samples are dropped from the whole cross-section (IC, binning,
-quantile returns) and counted in `coverage.n_masked`. Exit-side illiquidity and
-buy/sell direction are **not** modeled — that is backtest simulation.
+不可交易样本会从整个截面中剔除，并计入 coverage。退出侧流动性、买卖方向和成交
+模拟不在这里处理，那属于回测。
 
-### IC and RankIC
+### IC 与 RankIC
 
-Both are computed per day, pairwise-dropping NaN and not-tradable samples:
+- **IC** = Pearson(factor value, ret_h)。
+- **RankIC** = Pearson(factor rank, label rank)，即 Spearman，ties 取平均 rank。
 
-- **IC** = Pearson(factor value, ret_h).
-- **RankIC** = Pearson(factor rank, label rank) = Spearman, ties averaged.
+summary 按 `(factor, horizon)` 输出 mean、std、IR、`t_nw`、`win_rate` 等统计。
+`t_nw` 是 Newey-West t-stat，lag 使用 `h - 1`，用于处理 h>1 forward return
+导致的 daily IC 序列重叠自相关。
 
-We report Pearson IC on raw values *in addition to* RankIC; alphalens reports
-only Spearman.
+### 分箱与分位收益
 
-Summary statistics per (factor, horizon): mean, std, IR = mean/std,
-`t_nw`, `win_rate`. `t_nw` is a Newey–West t-statistic with a Bartlett kernel at
-lag = h−1 — overlapping h>1 forward returns autocorrelate the daily IC series,
-and an iid t-stat would systematically overstate significance. h=1 recovers the
-plain t-statistic.
+`binning="daily"`：每日把 factor-valid 样本稳定排序并切成近似等样本分位桶。
+这是组合解释最直接的口径：例如 Q10 表示每天做多因子值最高的 10%。
 
-### Binning and quantile returns
+`binning="global"`：用全样本 pooled distribution 的 type-7 quantile 做固定边界。
+它回答的是“因子值本身是否与未来收益单调相关”这个分布问题。注意，global 边界
+包含全样本信息，不应直接当作可交易组合边界。
 
-`binning="daily"` (default): each day's factor-valid samples are stably ranked
-(ties broken by symbol order, recorded), then bucketed `⌊pos·q/m⌋`. Equal-sized,
-deterministic, never raises on ties (unlike `pd.qcut`). This is the
-combination-interpretable caliber — "Q10 = long the top 10% by factor value each
-day" — whose return series composes into a net-value curve.
+`quantile_returns` 表是一行一个 `(date, factor, bin)`：
 
-`binning="global"`: cut points come from the pooled all-day distribution
-(type-7 quantiles); bucket boundaries are fixed. This answers the distributional
-question "is factor *value* monotone in forward return" (a weight-of-evidence
-view). Two caveats, documented because they bite: a non-stationary factor's
-per-bucket samples are unevenly distributed in time (time effects contaminate
-the cross-sectional read), and the boundaries embed full-sample information (any
-portfolio built by bucket has look-ahead).
-
-The `quantile_returns` table is one row per (date, factor, non-empty bucket):
-
-```
+```text
 date | factor | bin | bin_lo | bin_hi | count | mean_ret_1 | mean_ret_5 | ...
 ```
 
-`bin_lo`/`bin_hi` are the bucket's actual factor-value range that day (daily
-mode — also lets you watch factor drift; global mode shows the fixed cut
-points). `count` is the factor-valid sample count; each `mean_ret_h`'s
-denominator is that horizon's pair-valid count, so a bucket can have `count=40`
-but average a horizon over fewer names.
+summary 中的 `spread` 是 top bucket 均值减 bottom bucket 均值；
+`monotonicity` 是 bucket index 和全期 bucket 平均收益之间的 Kendall tau。
 
-`spread` (in the summary) is top-bucket mean − bottom-bucket mean, with its own
-NW t-statistic. `monotonicity` is the Kendall τ of (bucket index, full-period
-bucket mean return).
+### Demean
 
-### demean
+- `none`：使用原始收益。
+- `universe`：减去当日可交易 universe 等权平均收益。
+- `group`：减去当日 group 均值，用于行业内 IC；需要 `group_col`，且拒绝 null group。
 
-`none` (default): raw returns. `universe`: subtract the day's tradable
-equal-weight mean (quantile returns become excess-over-market; the top−bottom
-spread is unchanged, and IC is unchanged because subtracting a per-day constant
-does not move a correlation). `group`: subtract the day's group mean — this is
-industry-neutral, and makes IC an in-industry IC. `group` requires `group_col`
-and rejects null groups.
+### 换手、组合与自相关
 
-### Turnover, portfolio, autocorrelation
+跨日指标逐因子顺序计算，并在因子之间并行：
 
-Cross-day metrics, computed in a separate sequential pass per factor
-(parallelized across factors):
+- `turnover`：top/bottom bucket 的成员换手。
+- `portfolio`：需要 `ret_1`。`weighting="quantile"` 使用 top/bottom 等权
+  long-short；`weighting="factor"` 使用因子去均值后的幅度权重。h>1 时使用最近 h
+  个信号日权重的 staggered 平均。
+- `rank_autocorr`：day t 与 day t-lag 的因子 rank Pearson correlation，
+  默认统计 lag `{1, 5, 10, 20}`。
 
-- **Quantile turnover** (`turnover` table): `1 − |top_t ∩ top_{t−h}| / |top_t|`,
-  and likewise for the bottom bucket, per horizon.
-- **Long-short portfolio** (`portfolio` table): needs a `ret_1` column. Weights
-  are `weighting="quantile"` (default; top +0.5/n, bottom −0.5/n, so the LS
-  portfolio matches the rank-IC / spread / monotonicity caliber) or `"factor"`
-  (`(f − mean)/Σ|·|`, gross leverage 1 — a raw-magnitude diagnostic that can
-  diverge in sign from the rank-based metrics). For h>1, the portfolio is the
-  average of the last h signal days' weights (the staggered-substrategy caliber
-  that alphalens-reloaded dropped — restored here); close-to-close it is
-  equivalent to averaging h overlapping substrategies. Turnover =
-  `0.5·Σ|wbar_t − wbar_{t−1}|`; `net = gross − turnover · cost_bps/1e4`. A
-  position in a name with no `ret_1` today contributes zero (a suspension
-  approximation).
-- **Rank autocorrelation** (`rank_autocorr` table): factor-rank Pearson between
-  day t and t−lag on common symbols, averaged over time, for lag ∈ {1,5,10,20}.
+summary 还会包含 annualized long-short gross/net return、IR、换手等字段。
 
-Summary adds `ls_gross_ann` / `ls_net_ann` / `ls_ir` (annualized at 252),
-`ls_turnover`, `top_turnover`, `bottom_turnover`.
+## 结果对象与 streaming
 
-### Result object and streaming
+常用属性：
 
-`result.summary` / `result.ic` / `result.quantile_returns` / `result.coverage`
-/ `result.turnover` / `result.portfolio` / `result.rank_autocorr` /
-`result.ic_monthly` (present only for Date/Datetime time columns) /
-`result.meta` (the parameter snapshot) / `result.save(dir)`.
+- `result.summary`
+- `result.ic`
+- `result.quantile_returns`
+- `result.coverage`
+- `result.turnover`
+- `result.portfolio`
+- `result.rank_autocorr`
+- `result.ic_monthly`（Date/Datetime time 列时存在）
+- `result.meta`
+- `result.save(dir)`
 
-With `output_dir` set, the large tables (`ic`, `quantile_returns`, `coverage`,
-`turnover`, `portfolio`) are streamed to parquet in factor batches and returned
-as `polars.LazyFrame` scans; the small tables stay in memory. This bounds peak
-memory for thousand-factor runs — the dominant cost is `quantile_returns`
-(T×F×Q rows). `save()` writes the same contract to a directory (one parquet per
-table plus `meta.json`) and is memory-mode only.
+设置 `output_dir` 时，大表会按 factor batch 流式写入 parquet，并以
+`polars.LazyFrame` scan 的形式返回；小表保留在内存中。对于千级因子 run，这能
+限制峰值内存。若输入宽表本身就是内存瓶颈，可用 `factor_source=<parquet>` 从磁盘
+批量读取因子列。
 
-For thousand-factor runs the wide *input* frame is itself the memory ceiling.
-Pass `factor_source=<parquet>` (e.g. a `compute_alphas(output_path=...)` panel
-covering the same `(symbol, time)` panel) to read factor columns from disk in
-batches instead of from `df`; only the label / tradable / group columns need to
-be materialized.
+## HTML 与交互式报告
 
-### HTML report
+`result.to_html(path, max_detail_factors=200)` 写出单文件 HTML 报告，包含 summary
+表和单因子 drill-down。它不依赖外部资源，可以直接从磁盘打开。
 
-`result.to_html(path, max_detail_factors=200)` writes a single self-contained
-HTML file — a sortable, filterable multi-factor summary table plus a per-factor
-drill-down (mean return by quantile across horizons, monthly IC) drawn with
-inline SVG. No external assets, no server; it opens straight from disk. Memory
-mode only; the drill-down bundle is capped at `max_detail_factors` factors (the
-summary table always covers every factor) to bound file size, so sort/filter the
-result to the shortlist you care about first.
+`result.view()` 会启动嵌入式 `qweave-server`，打开 Vue + ECharts 的交互式报告。
+该视图适合筛选后的 shortlist，不建议直接用于千级因子全量 run。
 
-### Interactive report (Vue + Axum + ECharts)
-
-For a richer, interactive view, `result.view()` opens a browser report with a
-sortable summary table and per-factor tearsheets drawn with ECharts (tooltips,
-zoom, legend toggles). The Returns tab shows mean return by quantile, cumulative
-return by quantile, the long-short cumulative net-value with drawdown, and the
-top−bottom spread; the IC tab shows daily IC/RankIC with a rolling mean, the IC
-distribution, and the monthly IC heatmap.
-
-```python
-result = qf.evaluate(df, "symbol", "date", factor_cols)
-result.view()  # opens the browser; blocks until Ctrl-C
-```
-
-The server (`qweave-server`) and the compiled frontend are embedded in the
-extension module — `view()` needs no ports, paths, or external binary. It is
-read-only and filters the in-memory tables per factor, so use it on a filtered
-shortlist rather than a thousand-factor run. `view()` is memory-mode only; for a
-streamed `output_dir`, `save(dir)` then serve it from the CLI:
+streaming `output_dir` 可通过 CLI 打开：
 
 ```powershell
 cargo run -p qweave-server -- --dir <output_dir> --open
 ```
 
-Building the Python wheel embeds the frontend, so build the SPA first (one-time,
-requires Node/npm):
+构建 Python wheel 前需要先构建前端：
 
 ```powershell
-cd frontend; npm install; npm run build; cd ..
+Set-Location frontend
+npm install
+npm run build
+Set-Location ..
 ```
 
 ## `factor_correlation`
 
 ```python
-corr = qf.factor_correlation(df, symbol_col, time_col, factor_cols,
-                             tradable_col=None, min_cs_count=30)
+corr = qf.factor_correlation(
+    df,
+    symbol_col,
+    time_col,
+    factor_cols,
+    tradable_col=None,
+    min_cs_count=30,
+)
 ```
 
-Time-averaged daily cross-sectional rank correlation, returned as a symmetric
-F×F wide frame with a leading `factor` column. Intended for the *filtered*
-shortlist after `evaluate` (it holds every factor column densely in memory), not
-thousands of raw factors.
+返回时间平均的每日截面 rank correlation，是一个带 `factor` 首列的对称宽表。
+它适合 `evaluate` 后筛出的 shortlist，不适合直接对几千个原始因子使用，因为它会
+把所有因子列密集加载进内存。
 
-## Validation
+## 验证
 
-Three layers, mirroring the alpha engine's approach:
+1. Rust 小面板手算单测锁定精确值。
+2. `tests/test_evaluate.py` 和 `tests/test_flows.py` 用独立 NumPy reference 重新
+   推导各项指标，并覆盖 NaN、ties、tradable mask、streaming vs memory 等场景。
+3. `scripts/compare_alphalens.py` 是 dev-only cross-check，用于和
+   alphalens-reloaded 在匹配配置上对照。
 
-1. **Hand-computed unit tests** in Rust lock exact values on small panels.
-2. **Independent numpy reference** (`tests/test_evaluate.py`,
-   `tests/test_flows.py`) re-derives every metric with per-day Python loops and
-   matches the Rust kernel to `1e-10` across `daily`/`global` × demean modes,
-   with NaN / ties / tradable masks / streaming vs memory.
-3. **alphalens-reloaded cross-check** (`scripts/compare_alphalens.py`, dev-only,
-   not in CI): on a tie-free, complete panel with `entry_lag=0`, universe
-   demeaning, and matched quantiles, RankIC and quantile returns agree to
-   machine precision (~1e-17).
+与 alphalens 的差异是有意设计：Newey-West t-stat、确定性 rank bucketing、
+显式 `entry_lag`、tradable mask、同时报告 Pearson IC 和 Spearman RankIC，以及不
+提供带 look-ahead 风险的 future-return z-score clipping。
 
-Intentional divergences from alphalens (each a deliberate correction, not a
-match target): Newey–West t-stats vs iid; deterministic rank-bucketing vs
-`pd.qcut` raising on ties; explicit `entry_lag` vs prices carrying the execution
-lag implicitly; a tradable mask; reporting Pearson IC alongside Spearman; and no
-`filter_zscore` future-return clipping (alphalens's default has a documented
-look-ahead).
+## 非目标
 
-## Non-goals
-
-Portfolio optimization / Barra-style risk-model neutralization (only group
-demeaning is offered); event studies; pyfolio integration; intraday frequency;
-and precise backtesting (matching, slippage, exit-side illiquidity, capital
-curves). The evaluator answers whether a factor has information, not how much a
-strategy earns.
+当前评估器不做组合优化、Barra 风格风险模型中性化、event study、pyfolio 集成、
+精细回测、撮合、滑点、退出侧流动性或资金曲线模拟。它衡量因子是否有信息，不回答
+策略最终能赚多少钱。

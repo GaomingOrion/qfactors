@@ -1,10 +1,11 @@
-# Python Expression API
+# Python 表达式 API
 
-qweave 0.3 introduces an eager expression API for alpha research. Expressions
-are plain Python objects backed by the Rust `Expr` tree; executors evaluate a
-list of expressions immediately.
+[English](expression_api.en.md)
 
-## Construct Expressions
+qweave 提供 eager expression API，用于快速构造和执行 alpha 表达式。表达式是
+Python 对象，底层由 Rust `Expr` 树表示；执行器会立即计算表达式列表。
+
+## 构造表达式
 
 ```python
 import qweave as qf
@@ -15,50 +16,42 @@ intraday_return = (
 ).alias("intraday_return")
 ```
 
-Expressions must be aliased before they are passed to `compute_alphas` or
-`with_alphas`; the alias becomes the output column name.
+表达式传给 `compute_alphas` 或 `with_alphas` 前必须设置 alias；alias 会成为输出
+列名。
 
-Common operations include:
+常用操作包括：
 
-- arithmetic: `+`, `-`, `*`, `/`, unary `-`
-- comparisons: `<`, `>`, `<=`, `>=`, `==`
-- unary transforms: `abs`, `log`, `sign`, `rank`, `scale`
-- time-series windows: `delay`, `delta`, `ts_sum`, `ts_mean`, `product`,
-  `ts_min`, `ts_max`, `ts_argmin`, `ts_argmax`, `ts_rank`, `ts_rank_raw`,
-  `ts_std`, `slope`, `rsquare`, `resi`, `quantile`, `decay_linear`
-- binary functions: `min`, `max`, `power`, `signed_power`, `correlation`,
-  `covariance`, `group_rank`, `group_neutralize`, `where_`
+- 算术：`+`、`-`、`*`、`/`、一元 `-`
+- 比较：`<`、`>`、`<=`、`>=`、`==`
+- 一元变换：`abs`、`log`、`sign`、`rank`、`scale`
+- 时序窗口：`delay`、`delta`、`ts_sum`、`ts_mean`、`product`、`ts_min`、
+  `ts_max`、`ts_argmin`、`ts_argmax`、`ts_rank`、`ts_rank_raw`、`ts_std`、
+  `slope`、`rsquare`、`resi`、`quantile`、`decay_linear`
+- 二元/多元函数：`min`、`max`、`power`、`signed_power`、`correlation`、
+  `covariance`、`group_rank`、`group_neutralize`、`where_`
 
-## Execute Expressions
+## 执行表达式
 
-Use `with_alphas` when you want to preserve the input DataFrame and append
-factor columns in original row order:
+保留输入 DataFrame 并按原始行序追加因子列时，使用 `with_alphas`：
 
 ```python
 out = qf.with_alphas(df, "asset", "time", [intraday_return])
 ```
 
-Use `compute_alphas` when you want a tidy full-history `(time, symbol)` panel:
+需要完整历史的 `(time, symbol)` tidy panel 时，使用 `compute_alphas`：
 
 ```python
 out = qf.compute_alphas(df, "asset", "time", [intraday_return])
 ```
 
-`compute_alphas(..., output_path="alphas.parquet")` writes the full frame to
-Parquet and returns a summary dict. The current 0.3 implementation still
-materializes the full frame before writing; streaming/batched output is reserved
-for a later release.
+`compute_alphas(..., output_path="alphas.parquet")` 会写出完整结果并返回摘要。
+`with_alphas` 每个表达式会分配一个完整输出 buffer，再 scatter 回输入行序；大批量
+因子且不需要保留原始 shape 时，优先使用 `compute_alphas`。
 
-`with_alphas` preserves original row order by allocating one full-size output
-buffer per expression and scattering evaluated `(time, symbol)` values back into
-input order before appending the columns. For large batches, prefer
-`compute_alphas` when you do not need to keep the original DataFrame shape.
+## 复用模板
 
-## Reuse Templates
-
-`collect_inputs()` reports canonical input fields, and `replace_inputs()` maps
-those fields to physical DataFrame columns while preserving the expression
-alias:
+`collect_inputs()` 返回表达式引用的标准输入字段，`replace_inputs()` 把这些字段
+映射到实际 DataFrame 列，同时保留表达式 alias：
 
 ```python
 expr = ((qf.col("close") + qf.col("open")) / qf.lit(2.0)).alias("mid")
@@ -67,11 +60,10 @@ assert expr.collect_inputs() == {"close", "open"}
 adjusted = expr.replace_inputs({"close": "adj_close", "open": "adj_open"})
 ```
 
-Field remapping is part of the expression tree, so there is a single visible
-aliasing path (`replace_inputs()` or a library `input_alias`) rather than an
-executor-level alias argument.
+字段映射是表达式树的一部分。可见的 alias 路径只有 `replace_inputs()`，或内置
+因子库的 `input_alias` 参数。
 
-## Built-in Factor Libraries
+## 内置因子库
 
 ```python
 alphas = qf.worldquant_alpha101(
@@ -81,8 +73,6 @@ alphas = qf.worldquant_alpha101(
 out = qf.compute_alphas(df, "asset", "time", alphas)
 ```
 
-`qf.qlib_alpha158(input_alias, alphas=None)` exposes the Qlib Alpha158 set with
-the same signature. Pass an empty dict for identity input mapping. See
-[worldquant_alpha101.md](worldquant_alpha101.md) and
-[qlib_alpha158.md](qlib_alpha158.md) for implementation defaults and required
-input fields.
+`qf.qlib_alpha158(input_alias, alphas=None)` 以同样签名暴露 Qlib Alpha158。
+如果不需要字段映射，传入空 dict。实现口径和输入字段见
+[WorldQuant 101](worldquant_alpha101.md) 与 [Qlib Alpha158](qlib_alpha158.md)。

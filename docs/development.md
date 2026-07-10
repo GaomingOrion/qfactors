@@ -1,62 +1,68 @@
-# Development
+# 开发
 
-## Environment
+[English](development.en.md)
 
-Install Python dependencies and build the extension:
+## 环境
 
-```bash
+安装 Python 依赖并构建本地扩展：
+
+```powershell
 uv sync --dev
 uv run maturin develop
 ```
 
-The Rust toolchain is pinned by `rust-toolchain.toml`. Cargo will install/use
-the configured nightly toolchain when needed.
+Rust toolchain 由 `rust-toolchain.toml` 固定。Cargo 会在需要时自动安装或使用
+配置好的 nightly toolchain。
 
-## Checks
+## 检查
 
-Run these before committing:
+提交前运行：
 
-```bash
+```powershell
 cargo fmt --check
 cargo check --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 uv run maturin develop
-uv run pytest
+uv run python -m pytest
 ```
 
-`cargo test --workspace` runs the Rust unit and integration tests. The first run
-can take several minutes because Polars and PyO3 dependencies are compiled from
-source.
+`cargo test --workspace` 会运行 Rust 单测和集成测试。首次运行可能需要几分钟，
+因为 Polars 和 PyO3 依赖需要从源码编译。
 
-## Python Extension
+在当前 Windows 环境里，如果 workspace 测试二进制需要加载 Python DLL，可以把
+uv 管理的 Python 安装目录临时加入 `PATH` 后再运行测试。
 
-`uv run maturin develop` builds and installs the local extension module into the
-project environment. Re-run it after changing Rust code used by `qweave-py`.
+## Python 扩展
+
+`uv run maturin develop` 会构建并安装本地扩展模块到项目环境。修改
+`qweave-py` 使用到的 Rust 代码后，需要重新运行该命令。
 
 ## Benchmarks
 
-The synthetic alpha benchmark is an ignored Rust test:
+合成 alpha benchmark 是 ignored Rust test：
 
-```bash
+```powershell
 cargo test -p qweave-factors synthetic_alpha_benchmark -- --ignored --nocapture
 ```
 
-Benchmark dimensions can be adjusted with:
+benchmark 维度可通过环境变量调整：
 
 - `QWEAVE_BENCH_SYMBOLS`
 - `QWEAVE_BENCH_TIMES`
 - `QWEAVE_BENCH_REPEATS`
 
-To compare alpha engines locally, set `QWEAVE_ENGINE=tree` or `QWEAVE_ENGINE=dag`.
+比较 alpha 引擎时使用：
 
-### Cross-engine factor benchmarks
+```powershell
+$env:QWEAVE_ENGINE = "tree"  # 或 "dag"
+cargo test -p qweave-factors all_alphas_golden_matches_frozen_baseline
+Remove-Item Env:\QWEAVE_ENGINE
+```
 
-See [benchmarks](benchmark.md) for cross-engine benchmark commands and recorded
-results against Qlib Alpha158 and KunQuant WorldQuant101.
+跨引擎 benchmark 的说明见 [基准测试文档](benchmark.md)。
 
 ## Golden Fixtures
 
-The checked-in Parquet fixture for all-alphas regression coverage is synthetic.
-Only update it when an intentional implementation change alters expected output.
-Review the diff and mention the reason in the commit or pull request.
+仓库中的 Parquet golden fixture 是合成数据。只有当实现变更确实改变预期输出时
+才更新 fixture；更新时必须 review diff，并在提交或 PR 中说明原因。

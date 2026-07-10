@@ -1,11 +1,11 @@
-# Security Policy
+# 安全政策
 
-qweave is an early-stage open source project and does not yet have a formal
-security response program.
+[English](SECURITY.en.md)
 
-Please do not include private market data, credentials, tokens, or proprietary
-strategy details in public issues or pull requests.
+qweave 仍是早期开源项目，目前还没有正式的安全响应流程。
 
-For security-sensitive reports, use GitHub private vulnerability reporting once
-the repository is published. If private reporting is not available, contact the
-repository owner through the GitHub organization before sharing details.
+请不要在公开 issue 或 pull request 中包含私有市场数据、凭据、token 或专有策略
+细节。
+
+如果需要报告安全敏感问题，请优先使用 GitHub private vulnerability reporting。
+如果该功能不可用，请先通过 GitHub 联系仓库 owner，再分享细节。

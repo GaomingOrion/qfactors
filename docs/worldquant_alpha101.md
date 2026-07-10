@@ -1,12 +1,13 @@
 # WorldQuant 101 Alphas
 
-qweave builds `alpha1` through `alpha101` as built-in alpha expressions.
-The implementation follows the formula set from Kakushadze, "101 Formulaic
-Alphas", Appendix A, with project-specific defaults documented here.
+[English](worldquant_alpha101.en.md)
 
-## Public Surface
+qweave 将 `alpha1` 到 `alpha101` 构造成内置 alpha 表达式。实现参考
+Kakushadze 的 "101 Formulaic Alphas" 附录 A，并在本文记录项目自己的默认口径。
 
-Use:
+本项目与 WorldQuant 没有关联。
+
+## 公开接口
 
 ```python
 alphas = qweave.worldquant_alpha101(
@@ -16,48 +17,40 @@ alphas = qweave.worldquant_alpha101(
 qweave.compute_alphas(df, "asset", "time", alphas)
 ```
 
-`worldquant_alpha101(input_alias, alphas=None)` returns `PyExpr` objects for the
-built-in `alpha1` through `alpha101` set (all 101 when `alphas` is omitted, or
-the named subset in request order). `input_alias` maps canonical input names
-such as `close` to physical DataFrame columns such as `adj_close`; pass an empty
-dict for identity mapping. `compute_alphas()` evaluates those expressions over
-the full `(time, symbol)` panel, while `with_alphas()` appends them to the input
-DataFrame in original row order. See
-[expression_api.md](expression_api.md) for custom expression construction.
-Field remapping happens inside the expression tree, so use `input_alias` (or
-`PyExpr.replace_inputs()`) rather than a separate executor-level alias argument.
+`worldquant_alpha101(input_alias, alphas=None)` 返回 `PyExpr` 对象：
 
-## Defaults
+- 省略 `alphas` 时返回全部 101 个表达式。
+- 传入 `alphas` 时按请求顺序返回指定子集。
+- `input_alias` 把标准字段名（如 `close`）映射到实际列名（如 `adj_close`）。
+  不需要映射时传入空 dict。
 
-- `adv{d}` is implemented as `ts_mean(volume, d)`, using share volume rather
-  than dollar volume.
-- Non-integer lookback windows use `floor(d)`.
-- Paper `min(x, d)` and `max(x, d)` are implemented as rolling `ts_min(x, d)`
-  and `ts_max(x, d)`.
-- Dynamic exponent formulas use expression-valued `power` and `signed_power`.
-- `IndClass.sector`, `IndClass.industry`, and `IndClass.subindustry` map to
-  numeric input columns named `sector`, `industry`, and `subindustry`.
+`compute_alphas()` 在完整 `(time, symbol)` 面板上执行表达式；`with_alphas()`
+按原始行序把表达式输出追加回输入 DataFrame。自定义表达式见
+[Python 表达式 API](expression_api.md)。
 
-## Coverage Tiers
+## 默认口径
 
-Tier A requires base OHLCV columns: `open`, `high`, `low`, `close`, and
-`volume`. `returns` is derived from `close`.
+- `adv{d}` 实现为 `ts_mean(volume, d)`，使用股数成交量而不是成交额。
+- 非整数 lookback window 使用 `floor(d)`。
+- 论文中的 `min(x, d)` 和 `max(x, d)` 实现为 rolling `ts_min(x, d)` 和
+  `ts_max(x, d)`。
+- 动态指数公式使用表达式值版本的 `power` 和 `signed_power`。
+- `IndClass.sector`、`IndClass.industry`、`IndClass.subindustry` 映射到数值列
+  `sector`、`industry`、`subindustry`。
 
-Tier B requires the Tier A columns plus any referenced `vwap` or `cap` field.
-`adv{d}` is derived from `volume`.
+## 覆盖层级
 
-Tier C requires numeric group classification columns: `sector`, `industry`, or
-`subindustry`, depending on the formula.
+- Tier A：基础 OHLCV 字段 `open`、`high`、`low`、`close`、`volume`；
+  `returns` 从 `close` 派生。
+- Tier B：Tier A 加上公式引用的 `vwap` 或 `cap`；`adv{d}` 从 `volume` 派生。
+- Tier C：需要数值型分组字段 `sector`、`industry` 或 `subindustry`。
 
-The detailed implementation manifest is kept in
-[docs/plans/worldquant101_manifest.md](plans/worldquant101_manifest.md).
+详细实现 manifest 保存在
+[docs/plans/worldquant101_manifest.md](plans/worldquant101_manifest.md)。
 
-## Verification
+## 验证
 
-- Rust tests assert the builder returns exactly `alpha1` through `alpha101`.
-- Smoke tests compute all 101 alphas on a complete synthetic panel.
-- Golden regression coverage compares all alpha outputs against a frozen
-  synthetic Parquet fixture.
-- Independent reference tests cover representative formulas.
-
-This project is not affiliated with WorldQuant.
+- Rust 测试确认 builder 返回完整的 `alpha1` 到 `alpha101`。
+- smoke test 在完整合成面板上计算全部 101 个 alpha。
+- golden regression 使用冻结的合成 Parquet fixture 对照全部 alpha 输出。
+- 独立 reference 测试覆盖代表性公式。

@@ -1,98 +1,72 @@
 # qweave
 
-qweave is a Rust-powered quantitative research workflow toolkit with Python
-bindings for Polars panels. The current implementation covers factor and alpha
-computation, forward-return labels, factor evaluation, and interactive reports;
-the broader project direction is an end-to-end workflow for factor research,
-quantitative modeling, strategy construction, and backtesting.
+[English](README.en.md)
 
-## Why qweave
+qweave 是一个 Rust 驱动的量化研究工作流工具包，面向 Polars 面板数据提供
+Python 绑定。当前实现覆盖因子/alpha 计算、forward-return 标签、因子评估和
+交互式报告；项目方向是逐步扩展为覆盖因子研究、量化建模、策略构建和回测的
+端到端工具链。
 
-- **Polars-native Python workflow:** pass in a Polars DataFrame and get a Polars
-  DataFrame back. `with_alphas` appends results in the original row order, while
-  `compute_alphas` emits a full `(time, symbol)` panel for downstream scans.
-- **Rust execution core:** panel sorting, validation, rolling windows,
-  cross-sectional operators, and expression evaluation run in Rust with rayon
-  parallelism where it is already proven useful.
-- **Expression API for research iteration:** compose alphas with
-  `qweave.col("close")`, `qweave.lit(1.0)`, operators, windows, ranks,
-  neutralization, and `replace_inputs()` templates.
-- **Factor libraries built in:** `worldquant_alpha101()` returns `alpha1`
-  through `alpha101`, and `qlib_alpha158()` returns the Qlib Alpha158 feature
-  set — both as expression objects, with documented project defaults and input
-  aliasing for adjusted or vendor-specific column names.
-- **Regression guarded:** every built-in alpha is checked against a frozen
-  synthetic golden fixture at `1e-8` tolerance, so engine changes are reviewed
-  against stable numerical output.
+项目仍处于 pre-1.0 阶段。当前 API 适合研究实验和内部工作流，但后续仍可能
+调整。
 
-- **Factor evaluation (experimental):** `with_labels` appends forward-return
-  labels, `evaluate` scores factor columns for predictive power (IC / RankIC
-  with Newey–West t-stats), monotonicity (quantile returns), and tradability
-  (turnover, a staggered long-short portfolio), and `factor_correlation`
-  measures redundancy — all in the same single-DataFrame pipeline. See
-  [docs/factor_evaluation.md](docs/factor_evaluation.md). Calibers are validated
-  against an independent numpy reference and alphalens-reloaded, but the surface
-  is experimental until a frozen golden fixture lands.
+## 为什么是 qweave
 
-The project is early-stage. APIs are usable for experimentation and internal
-research workflows, but should be treated as pre-1.0.
+- **Polars 原生工作流：** 传入 Polars DataFrame，返回 Polars DataFrame。
+  `with_alphas` 会按原始行序追加因子列；`compute_alphas` 会输出完整的
+  `(time, symbol)` 面板，便于后续扫描和落盘。
+- **Rust 执行核心：** 面板排序、结构校验、滚动窗口、截面算子和表达式求值
+  都在 Rust 中执行，并在已验证有效的位置使用 rayon 并行。
+- **表达式 API：** 使用 `qweave.col("close")`、`qweave.lit(1.0)`、算术运算、
+  rolling window、rank、neutralization 和 `replace_inputs()` 模板快速构造
+  alpha。
+- **内置因子库：** `worldquant_alpha101()` 返回 `alpha1` 到 `alpha101`；
+  `qlib_alpha158()` 返回 Qlib Alpha158 特征集。两者都以表达式对象暴露，
+  并支持输入字段别名。
+- **回归保护：** 内置 alpha 会对照冻结的合成 golden fixture 校验输出，
+  用于防止引擎变更带来非预期数值漂移。
+- **因子评估：** `with_labels` 追加 forward-return 标签；`evaluate` 计算
+  IC / RankIC、分位收益、换手、long-short 组合等指标；
+  `factor_correlation` 衡量因子冗余。该评估 API 仍标记为 experimental。
 
-## Roadmap
+## 路线图
 
-qweave is pre-1.0 and under active development. The current implementation
-focuses on fast factor computation and factor evaluation while keeping results
-numerically stable — a frozen golden baseline guards alpha-engine changes at
-`1e-8` tolerance.
+**已完成**
 
-**Done**
+- WorldQuant 101 和 Qlib Alpha158 表达式因子库。
+- Python 表达式 API：`PyExpr`、`with_alphas`、`compute_alphas`、输入字段替换
+  和类型桩。
+- DAG alpha evaluator：公共子表达式复用、slot 复用、节点级并行和 fused
+  elementwise chain，当前作为默认引擎。
+- 因子评估基础能力：标签、IC/RankIC、分位收益、换手、long-short 组合、
+  HTML 报告和交互式报告。
 
-- v0.1.0 baseline frozen behind a golden regression safety net.
-- `O(n)` rolling-window kernels (Welford variance, monotonic-deque min/max,
-  rolling sum/mean/decay) replacing per-window recomputation.
-- Global allocator (jemalloc on Unix, mimalloc on Windows).
-- WorldQuant 101 (`alpha1`–`alpha101`) and Qlib Alpha158 factor libraries, both
-  as plain expression builders.
-- v0.3.0 Python expression API: `PyExpr`, `with_alphas`, full-history
-  `compute_alphas`, input replacement templates, and type stubs.
-- DAG evaluator — hash-consed common-subexpression elimination, slot reuse,
-  node-level parallelism, and fused elementwise chains — promoted to the default
-  engine after benchmarking faster than the tree evaluator across WorldQuant 101
-  and Alpha158. The tree evaluator remains available (`QWEAVE_ENGINE=tree`) as an
-  independent reference.
+**计划中**
 
-**Planned**
+- 量化建模、策略构建和回测模块。
+- 更完整的因子/alpha API 文档。
+- 发布到 PyPI 和 crates.io。
 
-- Node-level parallelism and fewer layout transposes in the evaluator.
-- Factor evaluation suite (`with_labels` / `evaluate` / `factor_correlation`,
-  with parquet factor-source streaming, a self-contained `EvalResult.to_html()`
-  report, and an interactive Vue + Axum + ECharts report via `EvalResult.view()`)
-  — landed as experimental; promotion pending a frozen golden fixture.
-- Quantitative modeling, strategy construction, and backtesting modules.
-- Publish to PyPI and crates.io.
-- Expanded factor / alpha API documentation.
+## 安装
 
-## Installation
+当前仓库面向源码构建，尚未发布到 PyPI 或 crates.io。
 
-This repository currently targets source builds. It is not published to PyPI or
-crates.io yet.
+前置要求：
 
-Prerequisites:
-
-- Python 3.10 or newer
+- Python 3.10 或更新版本
 - `uv`
-- Rust nightly with `rustfmt` and `clippy`
+- Rust nightly，包含 `rustfmt` 和 `clippy`
 
-Set up a local development environment:
+本地开发环境：
 
-```bash
+```powershell
 uv sync --dev
 uv run maturin develop
 ```
 
-The repository includes `rust-toolchain.toml`, so Cargo will use the pinned
-nightly toolchain automatically.
+仓库包含 `rust-toolchain.toml`，Cargo 会自动使用固定的 nightly toolchain。
 
-## Quick Start
+## 快速开始
 
 ```python
 import polars as pl
@@ -131,87 +105,76 @@ df_with_alpha = qweave.with_alphas(
 )
 ```
 
-`compute_alphas` computes expression alphas over the full panel and returns a
-Polars DataFrame by default, or a summary dict when `output_path` is provided.
-`with_alphas` appends expression outputs to the input DataFrame in its original
-row order.
+`compute_alphas` 会在完整面板上计算表达式 alpha，默认返回 Polars DataFrame；
+指定 `output_path` 时会写出 Parquet 并返回摘要。`with_alphas` 会把表达式输出
+按输入 DataFrame 原始行序追加回去。
 
-## Public API
+## 公开 API
 
-Python functions:
+Python 函数：
 
 - `qweave.compute_alphas(df, symbol_col, time_col, alphas, output_path=None)`
 - `qweave.with_alphas(df, symbol_col, time_col, alphas)`
-- `qweave.col(name)`, `qweave.lit(value)`, and expression operators
+- `qweave.col(name)`、`qweave.lit(value)` 和表达式运算符
 - `qweave.worldquant_alpha101(input_alias, alphas=None)`
 - `qweave.qlib_alpha158(input_alias, alphas=None)`
-- `qweave.with_labels(...)`, `qweave.evaluate(...)`,
-  `qweave.factor_correlation(...)`, `EvalResult.to_html(...)`, and the
-  interactive `EvalResult.view()` report
-  (experimental — see [docs/factor_evaluation.md](docs/factor_evaluation.md))
+- `qweave.with_labels(...)`、`qweave.evaluate(...)`
+- `qweave.factor_correlation(...)`、`EvalResult.to_html(...)`、
+  `EvalResult.view()`
 
-Input rules:
+输入规则：
 
-- `symbol_col` and `time_col` cannot contain nulls.
-- Structural NaN values are rejected.
-- Float input nulls are converted to NaN so factor logic can propagate missing
-  data.
-- The engine sorts panel rows by `(symbol_col, time_col)` and rejects duplicate
-  symbol-time pairs.
-- Field remapping lives in the expression tree: use `PyExpr.replace_inputs()` or
-  the `input_alias` argument of `worldquant_alpha101()` / `qlib_alpha158()`.
+- `symbol_col` 和 `time_col` 不能包含 null。
+- 结构列不允许 NaN。
+- 浮点输入列中的 null 会转成 NaN，让因子逻辑自然传播缺失值。
+- 引擎会按 `(symbol_col, time_col)` 排序，并拒绝重复的 symbol-time。
+- 字段映射存在于表达式树中：使用 `PyExpr.replace_inputs()`，或使用内置因子库
+  的 `input_alias` 参数。
 
-Memory note:
+## Alpha 引擎
 
-- `with_alphas` preserves original input row order by scattering each evaluated
-  alpha column into a new full-size output buffer before appending it. For very
-  wide alpha batches, `compute_alphas` is the more memory-lean executor because
-  it can move evaluated columns directly into the result frame.
+`compute_alphas` 默认使用 DAG evaluator。也可以显式选择 tree evaluator，作为
+独立参考实现：
 
-## Alpha Engine
-
-`compute_alphas` uses the DAG evaluator by default. The tree evaluator can be
-selected explicitly — it serves as an independent reference implementation:
-
-```bash
-QWEAVE_ENGINE=tree uv run pytest
+```powershell
+$env:QWEAVE_ENGINE = "tree"
+uv run python -m pytest
+Remove-Item Env:\QWEAVE_ENGINE
 ```
 
-Valid values are `dag` and `tree`; invalid values raise an error. Both engines
-are held to the same golden baseline at `1e-8` tolerance.
+有效值是 `dag` 和 `tree`；非法值会报错。
 
-## Factor Libraries
+## 因子库
 
-Two built-in alpha libraries ship as expression builders:
+- **WorldQuant 101**：见 [WorldQuant 101 文档](docs/worldquant_alpha101.md)。
+- **Qlib Alpha158**：见 [Qlib Alpha158 文档](docs/qlib_alpha158.md)。
 
-- **WorldQuant 101** (`alpha1`–`alpha101`) — see
-  [docs/worldquant_alpha101.md](docs/worldquant_alpha101.md) for supported input
-  fields, coverage tiers, and implementation defaults.
-- **Qlib Alpha158** (9 kbar + 4 price + 29 rolling groups × 5 windows) — see
-  [docs/qlib_alpha158.md](docs/qlib_alpha158.md) for the factor list and caliber
-  notes.
+本项目与 WorldQuant、Microsoft 或 Qlib 没有关联。
 
-This project is not affiliated with WorldQuant, Microsoft, or Qlib.
+## 文档
 
-## Development Checks
+- [架构](docs/architecture.md)
+- [开发](docs/development.md)
+- [Python 表达式 API](docs/expression_api.md)
+- [因子评估](docs/factor_evaluation.md)
+- [WorldQuant 101](docs/worldquant_alpha101.md)
+- [Qlib Alpha158](docs/qlib_alpha158.md)
+- [基准测试](docs/benchmark.md)
 
-Run the same checks expected by CI:
+## 开发检查
 
-```bash
+提交前运行：
+
+```powershell
 cargo fmt --check
 cargo check --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 uv run maturin develop
-uv run pytest
+uv run python -m pytest
 ```
 
-See [docs/development.md](docs/development.md) for more detail.
-
-For alpha expression construction and execution details, see
-[docs/expression_api.md](docs/expression_api.md).
-For cross-engine performance comparisons against Qlib Alpha158 and KunQuant
-WorldQuant101, see [docs/benchmark.md](docs/benchmark.md).
+更多细节见 [开发文档](docs/development.md)。
 
 ## License
 
