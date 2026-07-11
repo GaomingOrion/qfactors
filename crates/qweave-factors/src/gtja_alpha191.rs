@@ -30,7 +30,7 @@ fn dbm() -> Expr {
     where_(
         ge(open(), p.clone()),
         c(0.0),
-        max(open() - low(), p - open()),
+        max(open() - low(), open() - p),
     )
 }
 fn hd() -> Expr {
@@ -856,7 +856,7 @@ fn alpha_062() -> Expr {
 
 fn alpha_063() -> Expr {
     let _close = close();
-    ((sma(ts_max((_close.clone() - delay(_close.clone(), 1)), 0), 6, 1)
+    ((sma(max(c(0.0), (_close.clone() - delay(_close.clone(), 1))), 6, 1)
         / sma(abs((_close.clone() - delay(_close.clone(), 1))), 6, 1))
         * c(100.0))
 }
@@ -891,7 +891,7 @@ fn alpha_066() -> Expr {
 fn alpha_067() -> Expr {
     let _close = close();
     ((sma(
-        ts_max((_close.clone() - delay(_close.clone(), 1)), 0),
+        max(c(0.0), (_close.clone() - delay(_close.clone(), 1))),
         24,
         1,
     ) / sma(abs((_close.clone() - delay(_close.clone(), 1))), 24, 1))
@@ -1038,7 +1038,7 @@ fn alpha_078() -> Expr {
 fn alpha_079() -> Expr {
     let _close = close();
     ((sma(
-        ts_max((_close.clone() - delay(_close.clone(), 1)), 0),
+        max(c(0.0), (_close.clone() - delay(_close.clone(), 1))),
         12,
         1,
     ) / sma(abs((_close.clone() - delay(_close.clone(), 1))), 12, 1))
@@ -1270,7 +1270,7 @@ fn alpha_101() -> Expr {
 fn alpha_102() -> Expr {
     let _volume = volume();
     ((sma(
-        ts_max((_volume.clone() - delay(_volume.clone(), 1)), 0),
+        max(c(0.0), (_volume.clone() - delay(_volume.clone(), 1))),
         6,
         1,
     ) / sma(abs((_volume.clone() - delay(_volume.clone(), 1))), 6, 1))
@@ -1965,14 +1965,14 @@ fn alpha_161() -> Expr {
 fn alpha_162() -> Expr {
     let _close = close();
     ((((sma(
-        ts_max((_close.clone() - delay(_close.clone(), 1)), 0),
+        max(c(0.0), (_close.clone() - delay(_close.clone(), 1))),
         12,
         1,
     ) / sma(abs((_close.clone() - delay(_close.clone(), 1))), 12, 1))
         * c(100.0))
         - ts_min(
             ((sma(
-                ts_max((_close.clone() - delay(_close.clone(), 1)), 0),
+                max(c(0.0), (_close.clone() - delay(_close.clone(), 1))),
                 12,
                 1,
             ) / sma(abs((_close.clone() - delay(_close.clone(), 1))), 12, 1))
@@ -1981,7 +1981,7 @@ fn alpha_162() -> Expr {
         ))
         / (ts_max(
             ((sma(
-                ts_max((_close.clone() - delay(_close.clone(), 1)), 0),
+                max(c(0.0), (_close.clone() - delay(_close.clone(), 1))),
                 12,
                 1,
             ) / sma(abs((_close.clone() - delay(_close.clone(), 1))), 12, 1))
@@ -1989,7 +1989,7 @@ fn alpha_162() -> Expr {
             12,
         ) - ts_min(
             ((sma(
-                ts_max((_close.clone() - delay(_close.clone(), 1)), 0),
+                max(c(0.0), (_close.clone() - delay(_close.clone(), 1))),
                 12,
                 1,
             ) / sma(abs((_close.clone() - delay(_close.clone(), 1))), 12, 1))
