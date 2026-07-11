@@ -1,11 +1,12 @@
 # Guotai Junan Alpha191 Formula Sources
 
-[中文](qtja_alpha191_sources.md)
+[中文](gtja_alpha191_sources.md)
 
 This note records the authoritative formula sources, cross-check order, and known
 ambiguities for qweave's planned reproduction of 191 Guotai Junan short-horizon
-price/volume factors. The planned public collection name is `qtja_alpha191`;
-external sources usually call it `GTJA Alpha191` or `gtja191Alpha`.
+price/volume factors. The planned public collection name is `gtja_alpha191`, and
+its outputs are named `gtja_alpha001` through `gtja_alpha191`. External sources
+usually call the collection `GTJA Alpha191` or `gtja191Alpha`.
 
 This is not a copy of the Guotai Junan report and is not investment advice. The
 repository stores verifiable links, page locations, and implementation-caliber

@@ -1,10 +1,11 @@
 # 国泰君安 Alpha191 公式来源
 
-[English](qtja_alpha191_sources.en.md)
+[English](gtja_alpha191_sources.en.md)
 
 本文记录 qweave 计划复刻的国泰君安 191 个短周期价量因子的可靠公式来源、
-核对顺序和已知歧义。计划中的公开集合名称按项目约定写作 `qtja_alpha191`；
-原研报和外部实现通常使用 `GTJA Alpha191` 或 `gtja191Alpha`。
+核对顺序和已知歧义。计划中的公开集合名称按项目约定写作 `gtja_alpha191`，
+输出名称为 `gtja_alpha001` 至 `gtja_alpha191`；原研报和外部实现通常使用
+`GTJA Alpha191` 或 `gtja191Alpha`。
 
 本文不是国泰君安研报的副本，也不构成投资建议。原研报受其权利声明约束，
 因此仓库只保存可复核的来源链接、定位信息和实现所需的口径笔记，不重新分发 PDF。
