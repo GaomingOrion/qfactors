@@ -50,7 +50,10 @@ dev = [
 manifest-path = "crates/qweave-py/Cargo.toml"
 module-name = "qweave"
 features = ["extension-module"]
-include = [{ path = "frontend/dist/**/*", format = "sdist" }]
+include = [
+    { path = "LICENSE", format = "sdist" },
+    { path = "frontend/dist/**/*", format = "sdist" },
+]
 
 [tool.uv]
 package = false
