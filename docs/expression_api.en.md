@@ -9,11 +9,11 @@ the DAG evaluator instead of looping one column at a time in Python.
 ## Construct Expressions
 
 ```python
-import qweave as qf
+import qweave as qw
 
 intraday_return = (
-    (qf.col("close") - qf.col("open"))
-    / (qf.col("high") - qf.col("low") + qf.lit(0.001))
+    (qw.col("close") - qw.col("open"))
+    / (qw.col("high") - qw.col("low") + qw.lit(0.001))
 ).alias("intraday_return")
 ```
 
@@ -78,13 +78,13 @@ Use `with_alphas` when you want to preserve the input DataFrame and append
 factor columns in original row order:
 
 ```python
-out = qf.with_alphas(df, "asset", "time", [intraday_return])
+out = qw.with_alphas(df, "asset", "time", [intraday_return])
 ```
 
 Use `compute_alphas` when you want a tidy full-history `(time, symbol)` panel:
 
 ```python
-out = qf.compute_alphas(df, "asset", "time", [intraday_return])
+out = qw.compute_alphas(df, "asset", "time", [intraday_return])
 ```
 
 `compute_alphas(..., output_path="alphas.parquet")` writes the full result and
@@ -106,7 +106,7 @@ those fields to physical DataFrame columns while preserving the expression
 alias:
 
 ```python
-expr = ((qf.col("close") + qf.col("open")) / qf.lit(2.0)).alias("mid")
+expr = ((qw.col("close") + qw.col("open")) / qw.lit(2.0)).alias("mid")
 assert expr.collect_inputs() == {"close", "open"}
 
 adjusted = expr.replace_inputs({"close": "adj_close", "open": "adj_open"})
@@ -119,14 +119,14 @@ executor-level alias argument.
 ## Built-in Factor Libraries
 
 ```python
-alphas = qf.worldquant_alpha101(
+alphas = qw.worldquant_alpha101(
     {"close": "adj_close", "open": "adj_open"},
     alphas=["alpha13", "alpha101"],
 )
-out = qf.compute_alphas(df, "asset", "time", alphas)
+out = qw.compute_alphas(df, "asset", "time", alphas)
 ```
 
-`qf.qlib_alpha158(input_alias, alphas=None)` exposes the Qlib Alpha158 set with
+`qw.qlib_alpha158(input_alias, alphas=None)` exposes the Qlib Alpha158 set with
 the same signature. Pass an empty dict for identity input mapping. See
 [WorldQuant 101](worldquant_alpha101.en.md) and
 [Qlib Alpha158](qlib_alpha158.en.md) for implementation defaults and required

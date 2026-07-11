@@ -11,18 +11,18 @@
 评估流程是单 DataFrame pipeline。每一步都按原始行序追加列，不做额外 join：
 
 ```python
-import qweave as qf
+import qweave as qw
 
 # 1) 计算或准备因子列
-df = qf.with_alphas(
+df = qw.with_alphas(
     df,
     symbol_col="symbol",
     time_col="date",
-    alphas=qf.worldquant_alpha101({}),
+    alphas=qw.worldquant_alpha101({}),
 )
 
 # 2) 追加 forward-return 标签
-df = qf.with_labels(
+df = qw.with_labels(
     df,
     symbol_col="symbol",
     time_col="date",
@@ -34,7 +34,7 @@ df = qf.with_labels(
 )
 
 # 3) 评估因子列
-result = qf.evaluate(
+result = qw.evaluate(
     df,
     symbol_col="symbol",
     time_col="date",
@@ -79,7 +79,7 @@ bar offset 基于**全面板日期网格**，即所有 symbol 日期的 union，
 ## `evaluate`
 
 ```python
-result = qf.evaluate(
+result = qw.evaluate(
     df,
     symbol_col,
     time_col,
@@ -196,7 +196,7 @@ cargo run -p qweave-server -- --dir <output_dir> --open
 ## `factor_correlation`
 
 ```python
-corr = qf.factor_correlation(
+corr = qw.factor_correlation(
     df,
     symbol_col,
     time_col,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
-import qweave as qf
+import qweave as qw
 
 
 EXAMPLE_DIR = Path(__file__).resolve().parent
@@ -16,17 +16,17 @@ FACTOR_NAMES = ["alpha13", "alpha101", "mean_reversion_20"]
 def evaluate_sample(data_path: Path = DATA_PATH):
     df = pl.read_parquet(data_path)
 
-    alphas = qf.worldquant_alpha101({}, alphas=["alpha13", "alpha101"])
+    alphas = qw.worldquant_alpha101({}, alphas=["alpha13", "alpha101"])
     alphas.append(
         (
             -(
-                qf.col("close") / qf.col("close").delay(20) - qf.lit(1.0)
+                qw.col("close") / qw.col("close").delay(20) - qw.lit(1.0)
             )
         ).alias("mean_reversion_20")
     )
 
-    df = qf.with_alphas(df, "asset", "date", alphas)
-    df = qf.with_labels(
+    df = qw.with_alphas(df, "asset", "date", alphas)
+    df = qw.with_labels(
         df,
         symbol_col="asset",
         time_col="date",
@@ -34,7 +34,7 @@ def evaluate_sample(data_path: Path = DATA_PATH):
         entry_lag=1,
         tradable_col="tradable",
     )
-    return qf.evaluate(
+    return qw.evaluate(
         df,
         symbol_col="asset",
         time_col="date",

@@ -14,16 +14,16 @@ Evaluation is a single-DataFrame pipeline. Each step appends columns in original
 row order; no join is required.
 
 ```python
-import qweave as qf
+import qweave as qw
 
-df = qf.with_alphas(
+df = qw.with_alphas(
     df,
     symbol_col="symbol",
     time_col="date",
-    alphas=qf.worldquant_alpha101({}),
+    alphas=qw.worldquant_alpha101({}),
 )
 
-df = qf.with_labels(
+df = qw.with_labels(
     df,
     symbol_col="symbol",
     time_col="date",
@@ -34,7 +34,7 @@ df = qf.with_labels(
     tradable_col="tradable",
 )
 
-result = qf.evaluate(
+result = qw.evaluate(
     df,
     symbol_col="symbol",
     time_col="date",
@@ -76,7 +76,7 @@ flag back to the signal day and appends `tradable_entry` for `evaluate`.
 ## `evaluate`
 
 ```python
-result = qf.evaluate(
+result = qw.evaluate(
     df,
     symbol_col,
     time_col,
@@ -199,7 +199,7 @@ cargo run -p qweave-server -- --dir <output_dir> --open
 ## `factor_correlation`
 
 ```python
-corr = qf.factor_correlation(
+corr = qw.factor_correlation(
     df,
     symbol_col,
     time_col,

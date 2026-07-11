@@ -66,18 +66,18 @@ then creates labels, evaluates the factors, and opens the interactive report:
 
 ```python
 import polars as pl
-import qweave as qf
+import qweave as qw
 
 df = pl.read_parquet("examples/data/sample_daily.parquet")
 
-alphas = qf.worldquant_alpha101({}, alphas=["alpha13", "alpha101"])
+alphas = qw.worldquant_alpha101({}, alphas=["alpha13", "alpha101"])
 alphas.append(
-    (-(qf.col("close") / qf.col("close").delay(20) - qf.lit(1.0)))
+    (-(qw.col("close") / qw.col("close").delay(20) - qw.lit(1.0)))
     .alias("mean_reversion_20")
 )
 
-df = qf.with_alphas(df, "asset", "date", alphas)
-df = qf.with_labels(
+df = qw.with_alphas(df, "asset", "date", alphas)
+df = qw.with_labels(
     df,
     symbol_col="asset",
     time_col="date",
@@ -86,7 +86,7 @@ df = qf.with_labels(
     tradable_col="tradable",
 )
 
-result = qf.evaluate(
+result = qw.evaluate(
     df,
     symbol_col="asset",
     time_col="date",

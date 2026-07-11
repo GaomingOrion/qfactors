@@ -9,11 +9,11 @@ evaluator，而不是在 Python 里一列一列循环。
 ## 构造表达式
 
 ```python
-import qweave as qf
+import qweave as qw
 
 intraday_return = (
-    (qf.col("close") - qf.col("open"))
-    / (qf.col("high") - qf.col("low") + qf.lit(0.001))
+    (qw.col("close") - qw.col("open"))
+    / (qw.col("high") - qw.col("low") + qw.lit(0.001))
 ).alias("intraday_return")
 ```
 
@@ -75,13 +75,13 @@ intraday_return = (
 保留输入 DataFrame 并按原始行序追加因子列时，使用 `with_alphas`：
 
 ```python
-out = qf.with_alphas(df, "asset", "time", [intraday_return])
+out = qw.with_alphas(df, "asset", "time", [intraday_return])
 ```
 
 需要完整历史的 `(time, symbol)` tidy panel 时，使用 `compute_alphas`：
 
 ```python
-out = qf.compute_alphas(df, "asset", "time", [intraday_return])
+out = qw.compute_alphas(df, "asset", "time", [intraday_return])
 ```
 
 `compute_alphas(..., output_path="alphas.parquet")` 会写出完整结果并返回摘要。
@@ -99,7 +99,7 @@ out = qf.compute_alphas(df, "asset", "time", [intraday_return])
 映射到实际 DataFrame 列，同时保留表达式 alias：
 
 ```python
-expr = ((qf.col("close") + qf.col("open")) / qf.lit(2.0)).alias("mid")
+expr = ((qw.col("close") + qw.col("open")) / qw.lit(2.0)).alias("mid")
 assert expr.collect_inputs() == {"close", "open"}
 
 adjusted = expr.replace_inputs({"close": "adj_close", "open": "adj_open"})
@@ -111,14 +111,14 @@ adjusted = expr.replace_inputs({"close": "adj_close", "open": "adj_open"})
 ## 内置因子库
 
 ```python
-alphas = qf.worldquant_alpha101(
+alphas = qw.worldquant_alpha101(
     {"close": "adj_close", "open": "adj_open"},
     alphas=["alpha13", "alpha101"],
 )
-out = qf.compute_alphas(df, "asset", "time", alphas)
+out = qw.compute_alphas(df, "asset", "time", alphas)
 ```
 
-`qf.qlib_alpha158(input_alias, alphas=None)` 以同样签名暴露 Qlib Alpha158。
+`qw.qlib_alpha158(input_alias, alphas=None)` 以同样签名暴露 Qlib Alpha158。
 如果不需要字段映射，传入空 dict。实现口径和输入字段见
 [WorldQuant 101](worldquant_alpha101.md) 与 [Qlib Alpha158](qlib_alpha158.md)。
 
