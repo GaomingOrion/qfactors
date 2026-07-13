@@ -70,41 +70,16 @@ def test_worldquant_alpha101_returns_expression_subset_with_aliases():
     ][0].collect_inputs()
 
 
-def test_builtin_alpha_input_fields_and_docstrings():
-    assert qweave.worldquant_alpha101_input_fields() == [
-        "cap",
-        "close",
-        "high",
-        "industry",
-        "low",
-        "open",
-        "sector",
-        "subindustry",
-        "volume",
-        "vwap",
-    ]
-    assert qweave.qlib_alpha158_input_fields() == [
-        "close",
-        "high",
-        "low",
-        "open",
-        "volume",
-        "vwap",
-    ]
-    assert qweave.gtja_alpha191_input_fields() == [
-        "close",
-        "high",
-        "hml",
-        "index_close",
-        "index_open",
-        "low",
-        "mkt",
-        "open",
-        "smb",
-        "volume",
-        "vwap",
-    ]
+def test_builtin_alpha_builders_print_resolved_input_fields(capsys):
+    qweave.worldquant_alpha101({"close": "close_adj"}, alphas=["alpha13"])
+    qweave.qlib_alpha158({"close": "close_adj"}, alphas=["KMID"])
+    qweave.gtja_alpha191({"close": "close_adj"}, alphas=["gtja_alpha001"])
 
+    assert capsys.readouterr().out.splitlines() == [
+        "worldquant_alpha101 input_fields: {'close': 'close_adj', 'volume': 'volume'}",
+        "qlib_alpha158 input_fields: {'close': 'close_adj', 'open': 'open'}",
+        "gtja_alpha191 input_fields: {'close': 'close_adj', 'open': 'open', 'volume': 'volume'}",
+    ]
     for builder in [
         qweave.worldquant_alpha101,
         qweave.qlib_alpha158,
