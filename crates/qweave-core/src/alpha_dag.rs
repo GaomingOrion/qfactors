@@ -1,5 +1,6 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -15,16 +16,14 @@ use crate::error::{QWeaveError, Result};
 use crate::expr::{CmpOp, Expr};
 use crate::layout::{Layout, nt_to_tn, tn_to_nt};
 
-/// Upper bound on nodes evaluated concurrently within one dependency level.
-/// Bounds peak memory (one full-panel output per in-flight node) while staying a
-/// small multiple of the core count, so every core stays busy and heavy nodes
-/// still parallelize their own kernel via work-stealing.
-fn max_nodes_in_flight() -> usize {
-    2 * std::thread::available_parallelism().map_or(8, |n| n.get())
-}
-
 /// Cells per parallel chunk when running a fused-elementwise program.
 const FUSED_EW_CHUNK: usize = 8192;
+
+/// Nodes evaluated per parallel batch in `eval_roots`. Two per core keeps every
+/// core busy while bounding a batch's contribution to the live full-panel set.
+fn eval_batch_size() -> usize {
+    2 * std::thread::available_parallelism().map_or(8, |n| n.get())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct NodeId(u32);
@@ -488,45 +487,90 @@ impl Dag {
     }
 
     fn eval_roots(&self, roots: &[NodeId], cs: &CellSet) -> Result<Vec<Arc<DagVal>>> {
-        let order = self.reachable_order(roots);
-        let levels = self.level_buckets(&order);
+        // Memory-frugal *parallel* schedule. Nodes run in parallel batches, but
+        // the ready set is drained in postorder-DFS priority: the lowest postorder
+        // index (the node a depth-first walk would visit next) runs first. That
+        // finishes and frees a subtree before opening a new front, so the set of
+        // simultaneously-live full-panel buffers stays near one batch plus the few
+        // nodes shared across roots -- instead of the old level scheduler's entire
+        // widest level, which is where its peak blew up on wide DAGs. Each batch
+        // still runs on every core (and each kernel parallelizes internally over
+        // sym/time blocks), so throughput tracks the old scheduler.
+        let order = self.postorder(roots);
+        let n = self.nodes.len();
+        let mut priority = vec![0u32; n];
+        for (rank, &id) in order.iter().enumerate() {
+            priority[id.index()] = rank as u32;
+        }
         let mut remaining_consumers = self.consumer_counts(&order, roots);
-        let mut slots: Vec<Option<Arc<DagVal>>> = vec![None; self.nodes.len()];
-        let max_in_flight = max_nodes_in_flight();
 
-        for level in &levels {
-            // Every child of a node sits in a strictly lower level, so nodes in
-            // one level are mutually independent. We still cap how many run at
-            // once: a wide level holds one full-panel output per node, so without
-            // a bound the peak is the widest level. Evaluate the level in chunks
-            // that keep every core busy (heavy nodes still parallelize their own
-            // kernel) while only `MAX_NODES_IN_FLIGHT` outputs are live at a time.
-            for chunk in level.chunks(max_in_flight) {
-                // The parallel phase only reads the already-filled slots, so the
-                // borrows can't overlap and there is no data race; results are
-                // installed sequentially afterwards.
-                let computed = chunk
-                    .par_iter()
-                    .map(|&id| {
-                        self.eval_node(id, &slots, cs)
-                            .map(|value| (id, Arc::new(value)))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                for (id, value) in computed {
-                    slots[id.index()] = Some(value);
+        // Reverse edges: how many children each node still waits on, and which
+        // parents to notify when a node finishes. Counted per edge so a node that
+        // references the same child twice waits on (and notifies) it twice, which
+        // stays consistent with the per-edge `remaining_consumers`.
+        let mut unmet = vec![0u32; n];
+        let mut parents: Vec<Vec<NodeId>> = vec![Vec::new(); n];
+        for &id in &order {
+            self.nodes[id.index()].visit_children(|child| {
+                unmet[id.index()] += 1;
+                parents[child.index()].push(id);
+            });
+        }
+
+        let mut slots: Vec<Option<Arc<DagVal>>> = vec![None; n];
+        // Min-heap on postorder priority (BinaryHeap is a max-heap, so key on
+        // `Reverse` to pop the smallest rank first).
+        let mut ready: BinaryHeap<Reverse<(u32, u32)>> = BinaryHeap::new();
+        for &id in &order {
+            if unmet[id.index()] == 0 {
+                ready.push(Reverse((priority[id.index()], id.0)));
+            }
+        }
+
+        let batch_size = eval_batch_size();
+        let mut batch: Vec<NodeId> = Vec::with_capacity(batch_size);
+        while !ready.is_empty() {
+            batch.clear();
+            while batch.len() < batch_size {
+                match ready.pop() {
+                    Some(Reverse((_, idx))) => batch.push(NodeId(idx)),
+                    None => break,
                 }
-                // Release any child whose last consumer has now run, capping peak
-                // memory the same way the sequential evaluator did.
-                for &id in chunk {
-                    self.nodes[id.index()].visit_children(|child| {
-                        let remaining = &mut remaining_consumers[child.index()];
-                        *remaining = remaining
-                            .checked_sub(1)
-                            .expect("child consumer count underflow");
-                        if *remaining == 0 {
-                            slots[child.index()] = None;
-                        }
-                    });
+            }
+            // A node only becomes ready once all its children are filled, so no
+            // two nodes in a batch depend on each other; the closure reads only
+            // already-filled slots, so the parallel phase is race-free. Results
+            // are installed sequentially afterwards.
+            let computed = batch
+                .par_iter()
+                .map(|&id| {
+                    self.eval_node(id, &slots, cs)
+                        .map(|value| (id, Arc::new(value)))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            for (id, value) in computed {
+                slots[id.index()] = Some(value);
+            }
+            for &id in &batch {
+                // Release any child whose last consumer has now run.
+                self.nodes[id.index()].visit_children(|child| {
+                    let remaining = &mut remaining_consumers[child.index()];
+                    *remaining = remaining
+                        .checked_sub(1)
+                        .expect("child consumer count underflow");
+                    if *remaining == 0 {
+                        slots[child.index()] = None;
+                    }
+                });
+                // Wake any parent whose last child just landed.
+                for &parent in &parents[id.index()] {
+                    let waiting = &mut unmet[parent.index()];
+                    *waiting = waiting
+                        .checked_sub(1)
+                        .expect("parent unmet-child count underflow");
+                    if *waiting == 0 {
+                        ready.push(Reverse((priority[parent.index()], parent.0)));
+                    }
                 }
             }
         }
@@ -545,24 +589,41 @@ impl Dag {
         Ok(values)
     }
 
-    /// Group reachable nodes by dependency depth. `order` is ascending index =
-    /// topological order, so each child's level is final before its parent.
-    fn level_buckets(&self, order: &[NodeId]) -> Vec<Vec<NodeId>> {
-        let mut level = vec![0usize; self.nodes.len()];
-        let mut max_level = 0;
-        for &id in order {
-            let mut node_level = 0;
-            self.nodes[id.index()].visit_children(|child| {
-                node_level = node_level.max(level[child.index()] + 1);
-            });
-            level[id.index()] = node_level;
-            max_level = max_level.max(node_level);
+    /// Postorder DFS from `roots`: children are emitted before their parents and
+    /// each reachable node appears exactly once. A node's index in this order is
+    /// used by `eval_roots` as the drain priority for its ready set (not the
+    /// literal evaluation order, which runs in parallel batches): draining the
+    /// lowest index first walks the DAG depth-first, finishing and freeing a
+    /// subtree before opening a new front, which is what keeps the live full-panel
+    /// set small. Iterative to avoid overflowing the stack on deep expression
+    /// chains.
+    fn postorder(&self, roots: &[NodeId]) -> Vec<NodeId> {
+        let mut visited = vec![false; self.nodes.len()];
+        let mut order = Vec::new();
+        // Each frame is (node, emit): an `emit=false` frame expands the node's
+        // children; the `emit=true` frame pushed beneath them records the node
+        // once every child has been emitted.
+        let mut stack: Vec<(NodeId, bool)> = Vec::new();
+        for &root in roots {
+            stack.push((root, false));
+            while let Some((id, emit)) = stack.pop() {
+                if emit {
+                    order.push(id);
+                    continue;
+                }
+                if visited[id.index()] {
+                    continue;
+                }
+                visited[id.index()] = true;
+                stack.push((id, true));
+                self.nodes[id.index()].visit_children(|child| {
+                    if !visited[child.index()] {
+                        stack.push((child, false));
+                    }
+                });
+            }
         }
-        let mut buckets = vec![Vec::new(); max_level + 1];
-        for &id in order {
-            buckets[level[id.index()]].push(id);
-        }
-        buckets
+        order
     }
 
     fn reachable_order(&self, roots: &[NodeId]) -> Vec<NodeId> {
@@ -1190,7 +1251,7 @@ enum DagVal {
     Scalar(f64),
 }
 
-pub(crate) fn eval_exprs(exprs: &[Expr], cs: &CellSet) -> Result<Vec<Vec<f64>>> {
+pub(crate) fn eval_exprs(exprs: &[Expr], cs: &CellSet, output: Layout) -> Result<Vec<Vec<f64>>> {
     let mut dag = Dag::default();
     let roots = exprs.iter().map(|expr| dag.lower(expr)).collect::<Vec<_>>();
     dag.fuse_single_use_transposes(&roots);
@@ -1198,13 +1259,26 @@ pub(crate) fn eval_exprs(exprs: &[Expr], cs: &CellSet) -> Result<Vec<Vec<f64>>> 
     dag.fuse_elementwise(&roots);
     let values = dag.eval_roots(&roots, cs)?;
 
-    // Materializing each root (transpose to Tn + clone) is independent per
-    // alpha, so fan it out across alphas instead of a serial map.
-    Ok(exprs
-        .par_iter()
-        .zip(values)
-        .map(|(_, value)| to_cells(&value, Layout::Tn, cs))
+    // Materialize each root as its final column in `output` layout, independent
+    // per alpha, so fan it out across alphas.
+    Ok(values
+        .into_par_iter()
+        .map(|value| root_into_layout(value, output, cs))
         .collect())
+}
+
+/// Convert a finished root value into its owned column in `want` layout. When the
+/// value is already in `want` and uniquely owned (the usual case for a root —
+/// only the returned handle remains), its buffer is moved out with no copy;
+/// otherwise it is transposed or broadcast via `to_cells`.
+fn root_into_layout(value: Arc<DagVal>, want: Layout, cs: &CellSet) -> Vec<f64> {
+    match Arc::try_unwrap(value) {
+        Ok(DagVal::Cells { values, layout }) if layout == want => {
+            Arc::try_unwrap(values).unwrap_or_else(|shared| shared.as_ref().clone())
+        }
+        Ok(owned) => to_cells(&owned, want, cs),
+        Err(shared) => to_cells(&shared, want, cs),
+    }
 }
 
 fn slot_value(slots: &[Option<Arc<DagVal>>], id: NodeId) -> &DagVal {
@@ -1465,6 +1539,8 @@ mod tests {
             groups,
             symbols_tn: Column::new("asset".into(), vec!["A"; n_cells]),
             times_tn: Column::new("time".into(), (0..n_cells as i64).collect::<Vec<_>>()),
+            symbols_nt: Column::new("asset".into(), vec!["A"; n_cells]),
+            times_nt: Column::new("time".into(), (0..n_cells as i64).collect::<Vec<_>>()),
             time_block_by_value: HashMap::new(),
         }
     }

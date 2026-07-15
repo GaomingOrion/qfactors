@@ -28,8 +28,9 @@ qweave.compute_alphas(df, "asset", "time", alphas)
 - `input_alias` maps canonical input names such as `close` to physical DataFrame
   columns such as `adj_close`; pass an empty dict for identity mapping.
 
-`compute_alphas()` evaluates expressions over the full `(time, symbol)` panel.
-`with_alphas()` appends outputs to the input DataFrame in original row order.
+`compute_alphas()` evaluates expressions over the full panel and returns rows
+sorted by `(symbol, time)`. `with_alphas()` appends outputs to the input
+DataFrame in original row order.
 For custom expressions, see [Python Expression API](expression_api.en.md).
 
 ## Defaults

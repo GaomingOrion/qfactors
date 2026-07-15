@@ -35,8 +35,8 @@ Polars DataFrame
 
 `with_alphas` fits workflows that preserve the original input shape: it computes
 the full panel and scatters results back into original row order. `compute_alphas`
-fits large factor outputs: it returns a tidy `(time, symbol)` result or writes
-Parquet.
+fits large factor outputs: it returns a tidy `(symbol, time)`-sorted result or
+writes Parquet.
 
 ## Alpha Evaluator
 

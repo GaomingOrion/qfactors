@@ -26,6 +26,11 @@ pub struct CellSet {
     pub groups: HashMap<String, Arc<Vec<i32>>>,
     pub symbols_tn: Column,
     pub times_tn: Column,
+    /// Symbol/time index columns in Nt (symbol-major) order, matching the field
+    /// buffers. Used to assemble a (symbol, time)-ordered output frame without a
+    /// transpose.
+    pub symbols_nt: Column,
+    pub times_nt: Column,
     pub time_block_by_value: HashMap<AnyValue<'static>, usize>,
 }
 
@@ -110,6 +115,10 @@ pub fn build_cellset_with_groups(
     let times_tn = tn_sorted.column(&options.time_col)?.clone();
     let (time_blocks, time_block_by_value) = time_blocks(&times_tn)?;
 
+    // `sorted` is (symbol, time)-ordered, i.e. the Nt order the field buffers use.
+    let symbols_nt = sorted.column(&options.symbol_col)?.clone();
+    let times_nt = sorted.column(&options.time_col)?.clone();
+
     let fields = build_fields(&sorted, options, fields)?;
     let groups = build_groups(&sorted, groups)?;
 
@@ -123,6 +132,8 @@ pub fn build_cellset_with_groups(
         groups,
         symbols_tn,
         times_tn,
+        symbols_nt,
+        times_nt,
         time_block_by_value,
     })
 }

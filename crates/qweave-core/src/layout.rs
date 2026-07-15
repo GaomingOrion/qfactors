@@ -64,6 +64,8 @@ mod tests {
             groups: HashMap::new(),
             symbols_tn: Column::new("asset".into(), ["B", "A", "B"]),
             times_tn: Column::new("time".into(), [1i64, 2, 2]),
+            symbols_nt: Column::new("asset".into(), ["B", "A", "B"]),
+            times_nt: Column::new("time".into(), [1i64, 2, 2]),
             time_block_by_value: HashMap::new(),
         }
     }
@@ -92,6 +94,8 @@ mod tests {
             groups: HashMap::new(),
             symbols_tn: Column::new("asset".into(), vec!["A"; n]),
             times_tn: Column::new("time".into(), vec![0i64; n]),
+            symbols_nt: Column::new("asset".into(), vec!["A"; n]),
+            times_nt: Column::new("time".into(), vec![0i64; n]),
             time_block_by_value: HashMap::new(),
         }
     }

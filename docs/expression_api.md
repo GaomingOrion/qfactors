@@ -78,7 +78,7 @@ intraday_return = (
 out = qw.with_alphas(df, "asset", "time", [intraday_return])
 ```
 
-需要完整历史的 `(time, symbol)` tidy panel 时，使用 `compute_alphas`：
+需要完整历史、按 `(symbol, time)` 排序的 tidy panel 时，使用 `compute_alphas`：
 
 ```python
 out = qw.compute_alphas(df, "asset", "time", [intraday_return])

@@ -81,7 +81,7 @@ factor columns in original row order:
 out = qw.with_alphas(df, "asset", "time", [intraday_return])
 ```
 
-Use `compute_alphas` when you want a tidy full-history `(time, symbol)` panel:
+Use `compute_alphas` when you want a tidy full-history panel sorted by `(symbol, time)`:
 
 ```python
 out = qw.compute_alphas(df, "asset", "time", [intraday_return])

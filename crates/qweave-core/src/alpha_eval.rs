@@ -1556,6 +1556,8 @@ mod tests {
             groups,
             symbols_tn: Column::new("asset".into(), vec!["A"; n_cells]),
             times_tn: Column::new("time".into(), (0..n_cells as i64).collect::<Vec<_>>()),
+            symbols_nt: Column::new("asset".into(), vec!["A"; n_cells]),
+            times_nt: Column::new("time".into(), (0..n_cells as i64).collect::<Vec<_>>()),
             time_block_by_value: HashMap::new(),
         }
     }

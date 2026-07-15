@@ -7,6 +7,12 @@ and patch versions should remain backward compatible within a minor line.
 
 ## Unreleased
 
+- **Breaking:** `compute_alphas` now returns rows sorted by `(symbol, time)`
+  instead of `(time, symbol)`, matching the common instrument-major panel
+  layout. `with_alphas` still returns results in the original input row order.
+- Rewrote the DAG alpha scheduler to a memory-frugal postorder-priority batched
+  order, lowering peak memory on large multi-factor runs (e.g. WorldQuant101 +
+  Qlib158 over ~15M rows) without giving up parallelism.
 - Added the built-in `gtja_alpha191()` collection with padded output names
   `gtja_alpha001` through `gtja_alpha191`.
 

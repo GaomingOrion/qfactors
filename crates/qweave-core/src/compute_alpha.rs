@@ -26,7 +26,13 @@ pub fn compute_alphas(
     let (names, exprs) = prepare_alphas(&options, alphas, &HashSet::new())?;
     let (fields, groups) = fields_for(&exprs)?;
     let cs = build_cellset_with_groups(&df, &options, &fields, &groups)?;
-    let values = eval_exprs(&cs, &exprs)?;
+    // The CellSet has copied every field it needs; the input frame is dead weight
+    // from here on. Drop it before evaluation so its columns are not resident
+    // through the peak (the full (time, symbol) x alpha panel is built below).
+    drop(df);
+    // Output the (symbol, time)-ordered (Nt) panel: it matches the field buffers,
+    // so the many time-series-terminating alphas need no transpose to deliver.
+    let values = eval_exprs(&cs, &exprs, Layout::Nt)?;
     let frame = build_full_frame(&cs, names.into_iter().zip(values).collect(), &options)?;
 
     match output_path {
@@ -52,7 +58,9 @@ pub fn with_alphas(
     let (names, exprs) = prepare_alphas(&options, alphas, &input_names)?;
     let (fields, groups) = fields_for(&exprs)?;
     let cs = build_cellset_with_groups(&df, &options, &fields, &groups)?;
-    let values = eval_exprs(&cs, &exprs)?;
+    // Tn output: the scatter below maps each Tn cell back to its original row via
+    // `orig_index_tn`.
+    let values = eval_exprs(&cs, &exprs, Layout::Tn)?;
 
     let mut columns = Vec::with_capacity(names.len());
     for (name, values_tn) in names.into_iter().zip(values) {
@@ -68,13 +76,13 @@ pub fn with_alphas(
     Ok(out)
 }
 
-pub fn eval_exprs(cs: &CellSet, exprs: &[Expr]) -> Result<Vec<Vec<f64>>> {
+pub fn eval_exprs(cs: &CellSet, exprs: &[Expr], output: Layout) -> Result<Vec<Vec<f64>>> {
     if exprs.iter().any(requires_tree_engine) {
-        return eval_exprs_tree(exprs, cs);
+        return eval_exprs_tree(exprs, cs, output);
     }
     match alpha_engine()? {
-        AlphaEngine::Tree => eval_exprs_tree(exprs, cs),
-        AlphaEngine::Dag => eval_exprs_dag(exprs, cs),
+        AlphaEngine::Tree => eval_exprs_tree(exprs, cs, output),
+        AlphaEngine::Dag => eval_exprs_dag(exprs, cs, output),
     }
 }
 
@@ -141,10 +149,10 @@ fn alpha_engine() -> Result<AlphaEngine> {
     }
 }
 
-fn eval_exprs_tree(exprs: &[Expr], cs: &CellSet) -> Result<Vec<Vec<f64>>> {
+fn eval_exprs_tree(exprs: &[Expr], cs: &CellSet, output: Layout) -> Result<Vec<Vec<f64>>> {
     exprs
         .par_iter()
-        .map(|expr| Ok(to_cells(eval(expr, cs)?, Layout::Tn, cs).into_owned()))
+        .map(|expr| Ok(to_cells(eval(expr, cs)?, output, cs).into_owned()))
         .collect()
 }
 
@@ -193,8 +201,9 @@ fn fields_for(exprs: &[Expr]) -> Result<(BTreeSet<String>, BTreeSet<String>)> {
     Ok((fields, groups))
 }
 
-/// Assemble the full-panel output by moving each alpha's Tn vector into a column
-/// (no copy) and cloning the shared, cheap (Arc-backed) index columns.
+/// Assemble the full-panel output by moving each alpha's Nt vector into a column
+/// (no copy) and cloning the shared, cheap (Arc-backed) index columns. Rows are
+/// in Nt (symbol, time) order, matching the vectors produced by `eval_exprs`.
 fn build_full_frame(
     cs: &CellSet,
     results: Vec<(String, Vec<f64>)>,
@@ -202,9 +211,9 @@ fn build_full_frame(
 ) -> Result<DataFrame> {
     let mut columns = Vec::with_capacity(results.len() + 2);
 
-    let mut time = cs.times_tn.clone();
+    let mut time = cs.times_nt.clone();
     time.rename(options.time_col.clone().into());
-    let mut symbol = cs.symbols_tn.clone();
+    let mut symbol = cs.symbols_nt.clone();
     symbol.rename(options.symbol_col.clone().into());
     columns.push(time);
     columns.push(symbol);
@@ -239,11 +248,14 @@ mod tests {
     }
 
     #[test]
-    fn compute_alphas_outputs_full_tn_panel() -> Result<()> {
+    fn compute_alphas_outputs_full_nt_panel() -> Result<()> {
+        // Chosen so (symbol, time) order differs from (time, symbol): Nt groups
+        // each asset's timeline together (A1, A2, B1, B2), Tn would interleave
+        // by time (A1, B1, A2, B2).
         let df = df!(
-            "asset" => ["B", "A", "A"],
-            "time" => [2i64, 1, 2],
-            "close" => [20.0, 10.0, 11.0],
+            "asset" => ["B", "A", "A", "B"],
+            "time" => [2i64, 1, 2, 1],
+            "close" => [22.0, 10.0, 11.0, 21.0],
         )?;
 
         let out = memory_frame(compute_alphas(
@@ -253,22 +265,22 @@ mod tests {
             None,
         )?)?;
 
-        assert_eq!(out.height(), 3);
-        assert_eq!(
-            out.column("time")?
-                .try_i64()
-                .expect("time is i64")
-                .into_no_null_iter()
-                .collect::<Vec<_>>(),
-            [1, 2, 2]
-        );
+        assert_eq!(out.height(), 4);
         assert_eq!(
             out.column("asset")?
                 .try_str()
                 .expect("asset is string")
                 .iter()
                 .collect::<Vec<_>>(),
-            [Some("A"), Some("A"), Some("B")]
+            [Some("A"), Some("A"), Some("B"), Some("B")]
+        );
+        assert_eq!(
+            out.column("time")?
+                .try_i64()
+                .expect("time is i64")
+                .into_no_null_iter()
+                .collect::<Vec<_>>(),
+            [1, 2, 1, 2]
         );
         assert_eq!(
             out.column("test_alpha")?
@@ -276,7 +288,7 @@ mod tests {
                 .expect("test_alpha is f64")
                 .into_no_null_iter()
                 .collect::<Vec<_>>(),
-            [10.0, 11.0, 20.0]
+            [10.0, 11.0, 21.0, 22.0]
         );
         Ok(())
     }

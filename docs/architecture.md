@@ -29,8 +29,8 @@ Polars DataFrame
 ```
 
 `with_alphas` 适合保留原始 DataFrame shape：它会计算完整面板，再把结果按原始行序
-scatter 回输入。`compute_alphas` 适合大批量因子产出：它直接返回 tidy
-`(time, symbol)` 结果，或写出 Parquet。
+scatter 回输入。`compute_alphas` 适合大批量因子产出：它直接返回按
+`(symbol, time)` 排序的 tidy 结果，或写出 Parquet。
 
 ## Alpha evaluator
 
